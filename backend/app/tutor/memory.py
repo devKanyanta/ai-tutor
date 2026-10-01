@@ -52,10 +52,10 @@ class ConversationMemory:
         with get_db() as db:
             rows = db.execute(
                 """
-                SELECT id, role, content, sources, created_at 
+                SELECT rowid, id, role, content, sources, created_at 
                 FROM messages 
                 WHERE session_id = ? 
-                ORDER BY created_at DESC 
+                ORDER BY rowid DESC 
                 LIMIT ?
                 """,
                 (session_id, self.max_history_turns * 2)
@@ -65,6 +65,7 @@ class ConversationMemory:
         for r in reversed(rows):
             sources_val = json.loads(r["sources"]) if r["sources"] else []
             messages.append({
+                "rowid": r["rowid"],
                 "id": r["id"],
                 "role": r["role"],
                 "content": r["content"],
