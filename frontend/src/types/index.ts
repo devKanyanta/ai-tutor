@@ -27,6 +27,12 @@ export interface DocumentItem {
   updated_at: string;
 }
 
+export interface BatchUploadResult {
+  successful: DocumentItem[];
+  failed: Array<{ filename: string; error: string }>;
+  total_processed: number;
+}
+
 export interface Metrics {
   total_documents: number;
   total_chunks: number;

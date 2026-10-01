@@ -13,6 +13,7 @@ from app.db.models import (
     AdminLoginResponse,
     DocumentResponse,
     DocumentListResponse,
+    BatchUploadResponse,
     MetricsResponse
 )
 from app.ingestion.pipeline import pipeline
@@ -119,6 +120,81 @@ async def upload_document(
             created_at=str(r["created_at"]),
             updated_at=str(r["updated_at"])
         )
+
+@router.post("/documents/batch-upload", response_model=BatchUploadResponse)
+async def batch_upload_documents(
+    files: List[UploadFile] = File(...),
+    authorized: bool = Depends(verify_admin_token)
+):
+    """
+    Batch upload multiple curriculum documents simultaneously.
+    Parses and indexes each document, reporting successful and failed items.
+    """
+    allowed_exts = {"pdf", "txt", "docx", "doc", "md", "markdown", "csv"}
+    successful: List[DocumentResponse] = []
+    failed: List[dict] = []
+
+    for file in files:
+        filename = file.filename or "unknown"
+        ext = filename.split(".")[-1].lower() if "." in filename else ""
+        if ext not in allowed_exts:
+            failed.append({
+                "filename": filename,
+                "error": f"Unsupported extension '.{ext}'. Allowed: PDF, TXT, DOCX, MD, CSV."
+            })
+            continue
+
+        doc_id = str(uuid.uuid4())
+        save_filename = f"{doc_id}_{filename}"
+        save_path = settings.UPLOAD_DIR / save_filename
+
+        try:
+            content = await file.read()
+            file_size = len(content)
+            with open(save_path, "wb") as f:
+                f.write(content)
+
+            with get_db() as db:
+                db.execute(
+                    """
+                    INSERT INTO documents (id, filename, file_path, file_type, file_size, chunk_count, status)
+                    VALUES (?, ?, ?, ?, ?, 0, 'PENDING')
+                    """,
+                    (doc_id, filename, str(save_path), ext, file_size)
+                )
+                db.commit()
+
+            pipeline.process_file(
+                doc_id=doc_id,
+                file_path=save_path,
+                filename=filename,
+                file_type=ext
+            )
+
+            with get_db() as db:
+                r = db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+                successful.append(DocumentResponse(
+                    id=r["id"],
+                    filename=r["filename"],
+                    file_type=r["file_type"],
+                    file_size=r["file_size"],
+                    chunk_count=r["chunk_count"],
+                    status=r["status"],
+                    error_message=r["error_message"],
+                    created_at=str(r["created_at"]),
+                    updated_at=str(r["updated_at"])
+                ))
+        except Exception as e:
+            failed.append({
+                "filename": filename,
+                "error": str(e)
+            })
+
+    return BatchUploadResponse(
+        successful=successful,
+        failed=failed,
+        total_processed=len(files)
+    )
 
 @router.put("/documents/{doc_id}", response_model=DocumentResponse)
 async def update_document(
