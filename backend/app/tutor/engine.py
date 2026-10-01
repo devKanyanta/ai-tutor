@@ -70,11 +70,54 @@ class TutorEngine:
             yield {"type": "done", "message_id": msg_id, "session_id": session_id}
             return
 
-        # 3. Retrieve relevant chunks (REQ-AI-01)
-        chunks, is_in_bounds = retriever.retrieve(user_message)
+        # Prepare conversation history for context (REQ-UI-03)
+        history = memory.get_recent_messages(session_id)
+        # Exclude the message we just saved
+        past_turns = history[:-1] if len(history) > 1 else []
+
+        # 3. Retrieve relevant chunks with conversational context awareness
+        # Short conversational student turns (e.g. "yes", "it doubles", "give me a hint")
+        # should inherit the topic context from recent tutor turns rather than deflecting falsely.
+        words = user_message.strip().split()
+        is_short_conversational = len(words) <= 6
+
+        # Formulate query for retrieval
+        retrieval_query = user_message
+        if is_short_conversational and past_turns:
+            # Combine previous tutor prompt or student prompt with current reply
+            recent_context_snippets = [
+                t["content"] for t in past_turns[-2:] if t.get("content")
+            ]
+            if recent_context_snippets:
+                # Append last context to anchor conversational follow-ups
+                retrieval_query = f"{' '.join(recent_context_snippets)} {user_message}"
+
+        chunks, is_in_bounds = retriever.retrieve(retrieval_query)
+
+        # If still not in bounds but there are past turns in this session that were grounded,
+        # try retrieving using the prior conversational turn to keep Socratic flow alive
+        if not is_in_bounds and past_turns and is_short_conversational:
+            prior_turn = past_turns[-1]["content"]
+            fallback_chunks, fallback_in_bounds = retriever.retrieve(prior_turn)
+            if fallback_in_bounds:
+                chunks = fallback_chunks
+                is_in_bounds = True
 
         # 4. Out-of-Bounds Handling (REQ-AI-03)
         if not is_in_bounds:
+            # Log deflection for KPI tracking (KPI-3)
+            try:
+                import uuid
+                from app.db.database import get_db
+                with get_db() as db:
+                    db.execute(
+                        "INSERT INTO deflections (id, session_id, query) VALUES (?, ?, ?)",
+                        (str(uuid.uuid4()), session_id, user_message[:500])
+                    )
+                    db.commit()
+            except Exception as e:
+                logger.warning(f"Failed to log deflection: {e}")
+
             for token in OUT_OF_BOUNDS_RESPONSE.split(" "):
                 yield {"type": "token", "content": token + " "}
                 await asyncio.sleep(0.02)

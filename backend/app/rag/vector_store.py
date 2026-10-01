@@ -56,11 +56,15 @@ class GeminiEmbeddingClient:
         return self.embed_texts([query])[0]
 
     def _fallback_embedding(self, text: str, dim: int = 768) -> List[float]:
-        """Deterministic term-frequency hash embedding vector for testing/offline mode."""
+        """Deterministic, process-stable term-frequency hash embedding vector for testing/offline mode."""
+        import hashlib
+        import re
         vec = np.zeros(dim, dtype=np.float32)
-        words = text.lower().split()
+        # Extract word tokens
+        words = re.findall(r'\b[a-zA-Z0-9_]+\b', text.lower())
         for word in words:
-            idx = abs(hash(word)) % dim
+            # Cryptographically stable hash independent of Python process hash seed
+            idx = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16) % dim
             vec[idx] += 1.0
         norm = np.linalg.norm(vec)
         if norm > 0:

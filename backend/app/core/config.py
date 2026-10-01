@@ -2,6 +2,9 @@ import os
 from pydantic_settings import BaseSettings
 from pathlib import Path
 
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pathlib import Path
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Interactive Data-Driven AI Tutor"
     VERSION: str = "1.0.0"
@@ -29,9 +32,7 @@ class Settings(BaseSettings):
     RETRIEVAL_TOP_K: int = 4
     SIMILARITY_THRESHOLD: float = 0.35  # Below this threshold, question is considered out-of-bounds
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()
 

@@ -33,6 +33,8 @@ export interface Metrics {
   ready_documents: number;
   total_sessions: number;
   total_messages: number;
+  avg_turns_per_session: number;
+  deflection_count: number;
   feedback_positive: number;
   feedback_negative: number;
   positive_ratio: number;

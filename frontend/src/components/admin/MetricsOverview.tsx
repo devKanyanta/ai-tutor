@@ -1,4 +1,4 @@
-import { BookMarked, Layers, Users, ThumbsUp } from 'lucide-react';
+import { BookMarked, Layers, Users, ThumbsUp, Activity, ShieldAlert } from 'lucide-react';
 import type { Metrics } from '../../types';
 
 interface MetricsOverviewProps {
@@ -28,7 +28,21 @@ export const MetricsOverview: React.FC<MetricsOverviewProps> = ({ metrics }) => 
       value: metrics.total_sessions,
       subtext: `${metrics.total_messages} messages exchanged`,
       icon: Users,
+      color: 'text-blue-600 bg-blue-50 border-blue-100',
+    },
+    {
+      label: 'Session Engagement',
+      value: `${metrics.avg_turns_per_session} turns`,
+      subtext: 'Avg interaction depth per session',
+      icon: Activity,
       color: 'text-emerald-600 bg-emerald-50 border-emerald-100',
+    },
+    {
+      label: 'Out-of-Bounds Deflections',
+      value: metrics.deflection_count,
+      subtext: 'Off-topic queries redirected',
+      icon: ShieldAlert,
+      color: 'text-orange-600 bg-orange-50 border-orange-100',
     },
     {
       label: 'Satisfaction Ratio',
@@ -40,19 +54,19 @@ export const MetricsOverview: React.FC<MetricsOverviewProps> = ({ metrics }) => 
   ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
       {cards.map((c, i) => {
         const Icon = c.icon;
         return (
           <div key={i} className="bg-white p-3.5 rounded-xl border border-slate-200/90 shadow-2xs">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-slate-500">{c.label}</span>
-              <div className={`w-7 h-7 rounded-lg flex items-center justify-center border ${c.color}`}>
+              <span className="text-xs font-medium text-slate-500 truncate">{c.label}</span>
+              <div className={`w-7 h-7 rounded-lg flex items-center justify-center border shrink-0 ${c.color}`}>
                 <Icon className="w-3.5 h-3.5" />
               </div>
             </div>
-            <div className="text-xl font-bold text-slate-800">{c.value}</div>
-            <p className="text-[11px] text-slate-400 mt-0.5">{c.subtext}</p>
+            <div className="text-lg font-bold text-slate-800">{c.value}</div>
+            <p className="text-[10px] text-slate-400 mt-0.5 truncate">{c.subtext}</p>
           </div>
         );
       })}

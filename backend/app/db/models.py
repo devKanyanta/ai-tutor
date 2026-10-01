@@ -58,6 +58,8 @@ class MetricsResponse(BaseModel):
     ready_documents: int
     total_sessions: int
     total_messages: int
+    avg_turns_per_session: float  # KPI-2: Session Engagement
+    deflection_count: int         # KPI-3: Out-of-Bounds Deflection
     feedback_positive: int
     feedback_negative: int
     positive_ratio: float

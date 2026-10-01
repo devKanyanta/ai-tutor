@@ -1,4 +1,3 @@
-export type { DocumentItem, Metrics } from '../types';
 import type { DocumentItem, Metrics } from '../types';
 
 const BASE_URL = '/api';
@@ -66,6 +65,21 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Upload failed' }));
       throw new Error(err.detail || 'Upload failed');
+    }
+    return res.json();
+  },
+
+  updateDocument: async (token: string, docId: string, file: File): Promise<DocumentItem> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${BASE_URL}/admin/documents/${docId}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Update failed' }));
+      throw new Error(err.detail || 'Update failed');
     }
     return res.json();
   },

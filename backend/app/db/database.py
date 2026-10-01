@@ -71,12 +71,21 @@ def init_db():
     );
     """)
 
+    # Deflection logs table (KPI-3: Out-of-Bounds Deflection tracking)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS deflections (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        query TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
     conn.commit()
     conn.close()
 
 @contextmanager
 def get_db():
-    init_db()  # Ensure tables exist
     conn = sqlite3.connect(settings.DB_PATH)
     conn.row_factory = sqlite3.Row
     try:

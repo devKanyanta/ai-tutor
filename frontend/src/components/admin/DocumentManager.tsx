@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { UploadCloud, CheckCircle2, Clock, AlertCircle, FileText, Trash2, RefreshCw } from 'lucide-react';
+import { UploadCloud, CheckCircle2, Clock, AlertCircle, FileText, Trash2, RefreshCw, Upload } from 'lucide-react';
 import type { DocumentItem } from '../../types';
 import { api } from '../../services/api';
 
@@ -11,9 +11,11 @@ interface DocumentManagerProps {
 
 export const DocumentManager: React.FC<DocumentManagerProps> = ({ token, documents, onRefresh }) => {
   const [isUploading, setIsUploading] = useState(false);
+  const [updatingDocId, setUpdatingDocId] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const updateFileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -33,6 +35,32 @@ export const DocumentManager: React.FC<DocumentManagerProps> = ({ token, documen
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  };
+
+  const handleUpdateFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !updatingDocId) return;
+
+    setIsUploading(true);
+    setUploadError(null);
+    setUploadSuccess(null);
+
+    try {
+      const updated = await api.updateDocument(token, updatingDocId, file);
+      setUploadSuccess(`Successfully updated curriculum document with "${updated.filename}" (${updated.chunk_count} chunks)`);
+      onRefresh();
+    } catch (err: any) {
+      setUploadError(err.message || 'Update failed');
+    } finally {
+      setIsUploading(false);
+      setUpdatingDocId(null);
+      if (updateFileInputRef.current) updateFileInputRef.current.value = '';
+    }
+  };
+
+  const triggerUpdate = (docId: string) => {
+    setUpdatingDocId(docId);
+    updateFileInputRef.current?.click();
   };
 
   const handleDelete = async (docId: string, filename: string) => {
@@ -160,8 +188,15 @@ export const DocumentManager: React.FC<DocumentManagerProps> = ({ token, documen
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   {renderStatusBadge(doc.status)}
+                  <button
+                    onClick={() => triggerUpdate(doc.id)}
+                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                    title="Update/Replace document file (REQ-IN-03)"
+                  >
+                    <Upload className="w-4 h-4" />
+                  </button>
                   <button
                     onClick={() => handleDelete(doc.id, doc.filename)}
                     className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
@@ -175,6 +210,15 @@ export const DocumentManager: React.FC<DocumentManagerProps> = ({ token, documen
           </div>
         )}
       </div>
+
+      {/* Hidden file input for update action */}
+      <input
+        ref={updateFileInputRef}
+        type="file"
+        accept=".pdf,.docx,.txt,.md,.csv"
+        onChange={handleUpdateFileChange}
+        className="hidden"
+      />
     </div>
   );
 };

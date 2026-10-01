@@ -120,6 +120,83 @@ async def upload_document(
             updated_at=str(r["updated_at"])
         )
 
+@router.put("/documents/{doc_id}", response_model=DocumentResponse)
+async def update_document(
+    doc_id: str,
+    file: UploadFile = File(...),
+    authorized: bool = Depends(verify_admin_token)
+):
+    """
+    Update/refresh an existing curriculum document with a new revision (REQ-IN-03).
+    Re-parses, re-chunks, and updates the vector store without changing document ID.
+    """
+    ext = file.filename.split(".")[-1].lower() if "." in file.filename else ""
+    allowed_exts = {"pdf", "txt", "docx", "doc", "md", "markdown", "csv"}
+    if ext not in allowed_exts:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File extension '.{ext}' is not supported. Allowed formats: PDF, TXT, DOCX, MD, CSV."
+        )
+
+    with get_db() as db:
+        existing = db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        if not existing:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    save_filename = f"{doc_id}_{file.filename}"
+    save_path = settings.UPLOAD_DIR / save_filename
+
+    # Save new file content
+    try:
+        content = await file.read()
+        file_size = len(content)
+        with open(save_path, "wb") as f:
+            f.write(content)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save replacement file: {str(e)}"
+        )
+
+    # Clean old chunks from database and purge from vector store
+    vector_store.delete_document(doc_id)
+    with get_db() as db:
+        db.execute("DELETE FROM chunks WHERE document_id = ?", (doc_id,))
+        db.execute(
+            """
+            UPDATE documents 
+            SET filename = ?, file_path = ?, file_type = ?, file_size = ?, status = 'PENDING', updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (file.filename, str(save_path), ext, file_size, doc_id)
+        )
+        db.commit()
+
+    # Re-index through pipeline
+    try:
+        pipeline.process_file(
+            doc_id=doc_id,
+            file_path=save_path,
+            filename=file.filename,
+            file_type=ext
+        )
+    except Exception as e:
+        pass
+
+    with get_db() as db:
+        r = db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        return DocumentResponse(
+            id=r["id"],
+            filename=r["filename"],
+            file_type=r["file_type"],
+            file_size=r["file_size"],
+            chunk_count=r["chunk_count"],
+            status=r["status"],
+            error_message=r["error_message"],
+            created_at=str(r["created_at"]),
+            updated_at=str(r["updated_at"])
+        )
+
 @router.delete("/documents/{doc_id}")
 async def delete_document(doc_id: str, authorized: bool = Depends(verify_admin_token)):
     """Delete a document and purge its vectors from index (REQ-IN-03)."""
@@ -156,6 +233,13 @@ async def get_metrics(authorized: bool = Depends(verify_admin_token)):
         total_sessions = db.execute("SELECT COUNT(*) as c FROM sessions").fetchone()["c"]
         total_messages = db.execute("SELECT COUNT(*) as c FROM messages").fetchone()["c"]
         
+        # KPI-2: Session Engagement (Average turns / messages per session)
+        avg_turns = round(float(total_messages) / float(total_sessions), 1) if total_sessions > 0 else 0.0
+
+        # KPI-3: Out-of-Bounds Deflection Count
+        deflection_row = db.execute("SELECT COUNT(*) as c FROM deflections").fetchone()
+        deflection_count = deflection_row["c"] if deflection_row else 0
+
         pos_feedback = db.execute("SELECT COUNT(*) as c FROM feedback WHERE rating > 0").fetchone()["c"]
         neg_feedback = db.execute("SELECT COUNT(*) as c FROM feedback WHERE rating < 0").fetchone()["c"]
         total_fb = pos_feedback + neg_feedback
@@ -167,6 +251,8 @@ async def get_metrics(authorized: bool = Depends(verify_admin_token)):
         ready_documents=ready_docs,
         total_sessions=total_sessions,
         total_messages=total_messages,
+        avg_turns_per_session=avg_turns,
+        deflection_count=deflection_count,
         feedback_positive=pos_feedback,
         feedback_negative=neg_feedback,
         positive_ratio=round(pos_ratio, 2)
