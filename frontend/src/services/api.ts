@@ -1,4 +1,4 @@
-import type { DocumentItem, Metrics } from '../types';
+import type { DocumentItem, Metrics, BatchUploadResult } from '../types';
 
 const BASE_URL = '/api';
 
@@ -65,6 +65,21 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Upload failed' }));
       throw new Error(err.detail || 'Upload failed');
+    }
+    return res.json();
+  },
+
+  batchUploadDocuments: async (token: string, files: File[]): Promise<BatchUploadResult> => {
+    const formData = new FormData();
+    files.forEach((file) => formData.append('files', file));
+    const res = await fetch(`${BASE_URL}/admin/documents/batch-upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Batch upload failed' }));
+      throw new Error(err.detail || 'Batch upload failed');
     }
     return res.json();
   },

@@ -17,6 +17,11 @@ class DocumentListResponse(BaseModel):
     documents: List[DocumentResponse]
     total_count: int
 
+class BatchUploadResponse(BaseModel):
+    successful: List[DocumentResponse]
+    failed: List[dict]
+    total_processed: int
+
 class AdminLoginRequest(BaseModel):
     password: str
 

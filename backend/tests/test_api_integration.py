@@ -55,6 +55,22 @@ def test_document_lifecycle_rag_and_kpis():
         assert doc_data["status"] == "READY"
         assert doc_data["chunk_count"] > 0
 
+        # Test batch upload endpoint
+        batch_files = [
+            ("files", ("bio_chap1.txt", io.BytesIO(b"Biology 1: Cells are basic units of life."), "text/plain")),
+            ("files", ("chem_chap1.txt", io.BytesIO(b"Chemistry 1: Atoms bond to form molecules."), "text/plain")),
+        ]
+        batch_res = client.post(
+            "/api/admin/documents/batch-upload",
+            headers=headers,
+            files=batch_files
+        )
+        assert batch_res.status_code == 200
+        batch_data = batch_res.json()
+        assert len(batch_data["successful"]) == 2
+        assert len(batch_data["failed"]) == 0
+        assert batch_data["total_processed"] == 2
+
         # 2. Test document update/refresh endpoint (REQ-IN-03)
         updated_content = (
             "Calculus Chapter 4 Revised: The Fundamental Theorem of Calculus connects derivatives and definite integrals. "
