@@ -1,35 +1,33 @@
 # Interactive Data-Driven AI Tutor
 
-An interactive AI Tutor application that simulates human one-on-one tutoring through Socratic dialogue, strictly grounded in instructor-uploaded curriculum materials via Retrieval-Augmented Generation (RAG).
+An interactive AI tutor that simulates one-on-one Socratic tutoring, grounded strictly in instructor-uploaded curriculum materials via Retrieval-Augmented Generation (RAG).
 
-Built to satisfy all specifications from the **User Requirements Document (URD)**.
+Students chat with a tutor that never gives answers away directly — it leads with probing questions, hints, and reinforcement, citing only the ingested course materials. Instructors log in to manage the curriculum document set and review engagement metrics.
 
----
+## Tech Stack
 
-## 🚀 Features
+- **Backend:** Python, FastAPI, Uvicorn, SQLite, Google Gemini API (`google-genai`), NumPy, PyPDF / python-docx, pytest
+- **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, KaTeX (math rendering), react-markdown, Lucide icons
 
-* **Socratic Persona & Guiding Questions (`REQ-AI-02`, `USE-02`):** Rather than giving answers away, the tutor leads students to deeper understanding through probing questions, step-by-step hints, and positive reinforcement.
-* **Strict Curriculum Grounding (`REQ-AI-01`):** Ingested documents form the sole knowledge base. Responses cite the specific course materials referenced.
-* **Out-of-Bounds Handling (`REQ-AI-03`):** Automatically detects queries outside curriculum scope and redirects focus back to the course concepts.
-* **Safety & Guardrails (`REQ-AI-04`, `SEC-01`):** Immune to prompt injections ("DAN mode", "ignore previous instructions") and anonymizes PII (emails, phone numbers, SSNs) before persistence.
-* **Multi-Format Document Ingestion (`REQ-IN-01..04`):** Support for PDF, TXT, DOCX, Markdown, and CSV with real-time indexing status indicators.
-* **Sub-500ms Vector Retrieval (`PERF-02`):** Embedded local vector engine with normalized cosine similarity search.
-* **Sub-1.5s Streaming TTFT (`PERF-01`):** Server-Sent Events (SSE) streaming with Google Gemini integration.
-* **Rich Markdown & LaTeX Math (`REQ-UI-02`):** Full rendering of code blocks, tables, bold formatting, and mathematical equations via KaTeX ($formula$ and $$formula$$).
-* **Engagement & Feedback Metrics (`KPI-1..4`):** Thumbs up/down feedback widget with admin KPI dashboard.
+## Features
 
----
+- **Socratic tutoring (`REQ-AI-02`)** — guiding questions, step-by-step hints, positive reinforcement instead of direct answers
+- **Strict curriculum grounding (`REQ-AI-01`)** — responses are retrieved from (and cite) instructor-uploaded documents only; RAG pipeline with chunking, embeddings, and local cosine-similarity vector store
+- **Out-of-bounds handling (`REQ-AI-03`)** — detects queries outside curriculum scope and redirects to course concepts
+- **Safety guardrails (`REQ-AI-04`, `SEC-01`)** — prompt-injection resistance and PII anonymization before persistence
+- **Multi-format ingestion (`REQ-IN-01..04`)** — PDF, TXT, DOCX, Markdown, CSV; single or batch upload with indexing status
+- **Streaming responses (`PERF-01`)** — Server-Sent Events with low time-to-first-token; Markdown, code blocks, and LaTeX math in chat
+- **Admin console** — instructor login (password → bearer token), curriculum document management, thumbs up/down feedback and engagement KPIs
 
-## 🛠️ Tech Stack
+## Prerequisites
 
-* **Backend:** Python FastAPI, Uvicorn, SQLite, Google Gemini API (`google-genai`), PyPDF, Python-docx, NumPy.
-* **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, Lucide React, KaTeX, React Markdown.
+- Python 3.10+
+- Node.js (LTS) and npm
+- Google Gemini API key (optional — a semantic simulator fallback runs if unset)
 
----
+## Setup
 
-## 🏃 Quickstart Guide
-
-### 1. Backend Setup
+### 1. Backend
 
 ```bash
 cd backend
@@ -37,15 +35,14 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Optional: set Gemini API key (system uses semantic simulator if unset)
-export GEMINI_API_KEY="your-gemini-api-key"
-export ADMIN_PASSWORD="admin123"
+export GEMINI_API_KEY="your-gemini-api-key"   # optional; simulator used if unset
+export ADMIN_PASSWORD="your-admin-password"   # defaults to 'admin123' in dev
+export ADMIN_TOKEN="your-admin-token"         # defaults to a dev token
 
-# Run FastAPI server
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### 2. Frontend Setup
+### 2. Frontend
 
 ```bash
 cd frontend
@@ -53,20 +50,27 @@ npm install
 npm run dev
 ```
 
-Visit `http://localhost:5173` in your browser.
+Visit `http://localhost:5173`.
 
----
+### Tests
 
-## 🧪 Running Tests
-
-To run the backend test suite:
 ```bash
 cd backend
 PYTHONPATH=. venv/bin/pytest -v
 ```
 
-To run frontend production build verification:
-```bash
-cd frontend
-npm run build
-```
+## Screenshots
+
+> Placeholders — add actual captures to `docs/screenshots/`.
+
+![Chat Interface](docs/screenshots/chat.png)
+*Chat — Socratic tutoring conversation with streaming responses*
+
+![Admin Modal](docs/screenshots/admin-login.png)
+*Admin Login — instructor password prompt*
+
+![Document Manager](docs/screenshots/document-manager.png)
+*Curriculum Manager — upload and manage source documents*
+
+![Metrics Overview](docs/screenshots/metrics.png)
+*Engagement Metrics — KPI dashboard with feedback stats*
