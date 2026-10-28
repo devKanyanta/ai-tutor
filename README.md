@@ -15,7 +15,7 @@ Built to satisfy all specifications from the **User Requirements Document (URD)*
 * **Multi-Format Document Ingestion (`REQ-IN-01..04`):** Support for PDF, TXT, DOCX, Markdown, and CSV with real-time indexing status indicators.
 * **Sub-500ms Vector Retrieval (`PERF-02`):** Embedded local vector engine with normalized cosine similarity search.
 * **Sub-1.5s Streaming TTFT (`PERF-01`):** Server-Sent Events (SSE) streaming with Google Gemini integration.
-* **Hands-Free Voice Lessons:** Gemini Live API streams microphone audio, speaks tutor responses, supports interruption, and saves readable transcripts in the existing session. Curriculum retrieval remains on the backend; the Gemini API key is never exposed to the browser.
+* **Hands-Free Voice Lessons:** Gemini Live API streams microphone audio, speaks tutor responses, supports interruption, and saves readable transcripts in the existing session. The tutor's words appear as slides on a lesson board, revealed in step with the audio, and students can choose a Normal, Relaxed or Slow voice pace. Curriculum retrieval remains on the backend; the Gemini API key is never exposed to the browser.
 * **Rich Markdown & LaTeX Math (`REQ-UI-02`):** Full rendering of code blocks, tables, bold formatting, and mathematical equations via KaTeX ($formula$ and $$formula$$).
 * **Engagement & Feedback Metrics (`KPI-1..4`):** Thumbs up/down feedback widget with admin KPI dashboard.
 

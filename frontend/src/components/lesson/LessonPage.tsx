@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Mic, MicOff, RotateCcw, Send, WifiOff, AlertCircle, Loader2 } from 'lucide-react';
 import { Logo } from '../Logo';
 import { Link } from '../../router';
 import { LessonProgress } from './LessonProgress';
 import { SlideDeck } from './SlideDeck';
 import { VoiceOrb } from './VoiceOrb';
-import { useVoiceLesson, type VoiceLessonEvent } from './useVoiceLesson';
+import { useVoiceLesson, type VoiceLessonEvent, type Pace } from './useVoiceLesson';
 import { api } from '../../services/api';
 import type { LessonState, Message } from '../../types';
 
@@ -15,6 +15,35 @@ const STARTERS = [
   { title: 'Quick summary', text: 'Give me a short summary of the main concepts' },
   { title: 'I am stuck', text: 'Help me understand something I find confusing' },
 ];
+
+/**
+ * One board "explanation" = everything the tutor said between two student turns.
+ * Interruptions and late transcript chunks create several tutor messages in a row; join them.
+ */
+const toTutorTurns = (list: Message[]): Message[] => {
+  const turns: Message[] = [];
+  let previousRole: Message['role'] | null = null;
+  for (const m of list) {
+    if (m.role === 'assistant' && m.content) {
+      const prev = turns[turns.length - 1];
+      if (previousRole === 'assistant' && prev) {
+        const plain = !!prev.plain && !!m.plain;
+        turns[turns.length - 1] = {
+          ...prev,
+          id: m.id,
+          plain,
+          content: `${prev.content}${plain ? ' ' : '\n\n'}${m.content}`,
+          sources: m.sources?.length ? m.sources : prev.sources,
+          feedback: m.feedback ?? prev.feedback,
+        };
+      } else {
+        turns.push({ ...m });
+      }
+    }
+    previousRole = m.role;
+  }
+  return turns;
+};
 
 /** Voice transcription and interrupted turns arrive in fragments; show them as one utterance. */
 const mergeConsecutive = (list: Message[]): Message[] => {
@@ -39,6 +68,10 @@ export const LessonPage: React.FC = () => {
   const [initError, setInitError] = useState(false);
   const [booting, setBooting] = useState(true);
   const [lesson, setLesson] = useState<LessonState>({ lesson_stage: 'INIT', current_topic: '', student_turns: 0 });
+  const [progress, setProgress] = useState(1);
+  const [pace, setPaceState] = useState<Pace>(() => {
+    try { const v = localStorage.getItem('ai_tutor_pace'); return v === 'normal' || v === 'slow' ? v : 'relaxed'; } catch { return 'relaxed'; }
+  });
   const [speaker, setSpeaker] = useState<'none' | 'you' | 'tutor'>('none');
   const voiceSourcesRef = useRef<Message['sources']>([]);
   const lastVoiceRole = useRef<'user' | 'assistant' | null>(null);
@@ -97,7 +130,7 @@ export const LessonPage: React.FC = () => {
         if (last?.role === 'assistant' && last.id.startsWith('voice-assistant-')) {
           return prev.map((m, i) => (i === prev.length - 1 ? { ...m, content: m.content + event.content } : m));
         }
-        return [...prev, { id: `voice-assistant-${Date.now()}`, role: 'assistant', content: event.content || '', sources: voiceSourcesRef.current || [], created_at: new Date().toISOString() }];
+        return [...prev, { id: `voice-assistant-${Date.now()}`, role: 'assistant', content: event.content || '', sources: voiceSourcesRef.current || [], created_at: new Date().toISOString(), plain: true }];
       });
       return;
     }
@@ -122,6 +155,12 @@ export const LessonPage: React.FC = () => {
 
   const voice = useVoiceLesson({ sessionId, onEvent: handleVoiceEvent, onActiveChange: setIsVoiceActive });
 
+  useEffect(() => {
+    voice.setPace(pace);
+    try { localStorage.setItem('ai_tutor_pace', pace); } catch { /* storage unavailable */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pace]);
+
   // Which side is talking right now, for the status line. Polls the audio levels a few times a second.
   useEffect(() => {
     if (voice.status !== 'listening') { setSpeaker('none'); return; }
@@ -132,6 +171,17 @@ export const LessonPage: React.FC = () => {
     }, 150);
     return () => window.clearInterval(timer);
   }, [voice.status, voice.levelsRef]);
+
+  // Reveal the tutor's spoken text in step with playback (see getSpeechProgress).
+  useEffect(() => {
+    if (!isVoiceActive) { setProgress(1); return; }
+    const timer = window.setInterval(() => {
+      const next = voice.getSpeechProgress();
+      setProgress((prev) => (Math.abs(prev - next) < 0.004 ? prev : next));
+    }, 80);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVoiceActive]);
 
   const handleFeedback = async (messageId: string, rating: 1 | -1) => {
     try {
@@ -220,10 +270,17 @@ export const LessonPage: React.FC = () => {
     }
   };
 
-  const tutorTurns = messages.filter((m) => m.role === 'assistant' && m.content);
+  const revealed = useMemo(() => {
+    const m = messages[messages.length - 1];
+    if (!isVoiceActive || !m || m.role !== 'assistant' || !m.plain || progress >= 1) return messages;
+    const end = m.content.indexOf(' ', Math.floor(m.content.length * progress));
+    const visible = end < 0 ? m.content : m.content.slice(0, end);
+    return [...messages.slice(0, -1), { ...m, content: visible }];
+  }, [messages, isVoiceActive, progress]);
+  const tutorTurns = useMemo(() => toTutorTurns(revealed), [revealed]);
   const studentTurns = messages.filter((m) => m.role === 'user');
   const last = messages[messages.length - 1];
-  const voiceStreaming = last?.role === "assistant" && last.id.startsWith("voice-assistant-");
+  const voiceStreaming = last?.role === "assistant" && (last.id.startsWith("voice-assistant-") || (isVoiceActive && !!last.plain && progress < 1));
   const streaming = isLoading || !!voiceStreaming;
   const thinking = isLoading && last?.role === 'assistant' && !last.content;
 
@@ -295,6 +352,22 @@ export const LessonPage: React.FC = () => {
                     <Mic className="h-4 w-4" /> Start voice lesson
                   </button>
                 )}
+              </div>
+              <div className="mt-3 lg:mt-4" role="radiogroup" aria-label="Tutor speaking pace">
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-400 lg:text-center">Voice pace</p>
+                <div className="inline-flex overflow-hidden rounded-lg border border-ink-300 lg:flex">
+                  {([['normal', 'Normal'], ['relaxed', 'Relaxed'], ['slow', 'Slow']] as const).map(([id, label]) => (
+                    <button
+                      key={id}
+                      role="radio"
+                      aria-checked={pace === id}
+                      onClick={() => setPaceState(id)}
+                      className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors ${pace === id ? 'bg-board-800 text-[#f6f2e9]' : 'bg-white text-ink-600 hover:bg-ink-100'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
               {voice.status === 'error' && voice.error && (
                 <p role="alert" className="mt-2 flex items-start gap-1.5 text-left text-xs text-clay-700"><AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {voice.error}</p>

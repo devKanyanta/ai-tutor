@@ -21,12 +21,9 @@ const QUICK = [
   ['Quiz me', 'Quiz me on this'],
 ];
 
-const sizeFor = (text: string) => {
-  const n = text.length;
-  if (n < 110) return 'text-[1.7rem] sm:text-[2.4rem] leading-[1.28]';
-  if (n < 200) return 'text-[1.35rem] sm:text-[1.9rem] leading-[1.38]';
-  return 'text-[1.1rem] sm:text-[1.5rem] leading-[1.5]';
-};
+// One steady size for prose so text never appears to change font while it streams in.
+const PROSE_SIZE = 'text-[1.4rem] sm:text-[1.9rem] leading-[1.4]';
+const LONG_SIZE = 'text-[1.1rem] sm:text-[1.4rem] leading-[1.5]';
 
 export const SlideDeck: React.FC<SlideDeckProps> = ({
   turns, streaming, thinking, followLive, starters, disabled, onAsk, onFeedback,
@@ -44,8 +41,12 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
   const turn = turns[turnIdx];
   const slides = useMemo(() => (turn ? toSlides(turn.content) : []), [turn]);
   const isLive = streaming && turnIdx === latest;
-  const autoIdx = isLive && followLive ? Math.max(0, slides.length - 1) : 0;
+  // Spoken turns follow the newest slide, and stay there after the tutor finishes.
+  const follow = (isLive && followLive) || (!!turn?.plain && turnIdx === latest);
+  const autoIdx = follow ? Math.max(0, slides.length - 1) : 0;
   const slideIdx = Math.min(Math.max(fresh && nav.slide !== null ? nav.slide : autoIdx, 0), Math.max(0, slides.length - 1));
+  const showTrail = follow && slideIdx > 0 && slideIdx === slides.length - 1 && !(fresh && nav.slide !== null);
+  const renderSlide = (text: string) => (turn?.plain ? <div className="md-board"><p className="whitespace-pre-wrap">{text}</p></div> : <MarkdownBoard content={text} />);
 
   const go = (delta: number) => {
     const next = slideIdx + delta;
@@ -146,12 +147,17 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
         )}
 
         {slide && (
-          <div
-            key={`${turnIdx}-${slideIdx}-${slide.startsWith('```') ? 'c' : ''}`}
-            className={`mx-auto w-full max-w-3xl ${nav.dir === 'next' ? 'anim-slide-next' : 'anim-slide-prev'} ${isLive && slideIdx === slides.length - 1 ? 'caret-host' : ''}`}
-          >
-            <div className={`font-serif ${sizeFor(slide)} ${isLive && slideIdx === slides.length - 1 ? 'caret' : ''}`}>
-              <MarkdownBoard content={slide} />
+          <div className="mx-auto w-full max-w-3xl">
+            {showTrail && (
+              <p key={`trail-${slideIdx}`} className="anim-fade-in mb-6 line-clamp-3 font-serif text-[1.05rem] leading-snug text-[#f1ece0]/45 sm:text-[1.25rem]">
+                {slides[slideIdx - 1]?.replace(/[*_`#>$]/g, '')}
+              </p>
+            )}
+            <div
+              key={`${turnIdx}-${slideIdx}`}
+              className={`${nav.dir === 'next' ? 'anim-slide-next' : 'anim-slide-prev'} font-serif ${slide.length > 260 ? LONG_SIZE : PROSE_SIZE} ${isLive && slideIdx === slides.length - 1 ? 'caret' : ''}`}
+            >
+              {renderSlide(slide)}
             </div>
           </div>
         )}

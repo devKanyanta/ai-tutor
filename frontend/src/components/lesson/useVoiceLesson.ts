@@ -20,7 +20,22 @@ interface VoiceLessonOptions {
   onActiveChange: (active: boolean) => void;
 }
 
+/** Playback speed multipliers. Slowing playback is the reliable way to pace the tutor; prompts alone are not. */
+export const PACE_RATES = { normal: 1, relaxed: 0.88, slow: 0.76 } as const;
+export type Pace = keyof typeof PACE_RATES;
+
 export type VoiceStatus = 'idle' | 'connecting' | 'listening' | 'error';
+
+interface TurnAudio {
+  scheduled: number;   // seconds of tutor audio received this turn
+  playedBase: number;  // seconds already played in earlier uninterrupted runs
+  runStart: number;    // playback-context time the current run began
+  runEnd: number;      // playback-context time the current run ends
+  ended: boolean;      // the turn finished; the next text/audio starts a new one
+  frozen: number | null; // fraction to hold after an interruption
+  textSince: number;   // wall-clock ms when this turn's text started (fallback if no audio arrives)
+}
+const newTurnAudio = (): TurnAudio => ({ scheduled: 0, playedBase: 0, runStart: 0, runEnd: 0, ended: false, frozen: null, textSince: Date.now() });
 
 /** Live audio levels (0..1) read by the orb animation every frame without re-rendering React. */
 export interface VoiceLevels { mic: number; tutor: number }
@@ -29,6 +44,11 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
   const [status, setStatus] = useState<VoiceStatus>('idle');
   const [error, setError] = useState('');
   const levelsRef = useRef<VoiceLevels>({ mic: 0, tutor: 0 });
+  const paceRef = useRef<number>(PACE_RATES.normal);
+  // Stateful slow-down resampler: keeps its position/last sample between chunks so there are no seams.
+  const resamplerRef = useRef({ pos: 0, prev: 0 });
+  // Per-turn audio clock, used to reveal the tutor's text in step with what is actually being heard.
+  const turnAudioRef = useRef<TurnAudio>(newTurnAudio());
   const socketRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   // Playback runs on its own 24 kHz context so tutor audio is never resampled chunk-by-chunk
@@ -83,6 +103,7 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
 
     playbackTimeRef.current = 0;
     levelsRef.current = { mic: 0, tutor: 0 };
+    resamplerRef.current = { pos: 0, prev: 0 };
     setStatus((current) => current === 'error' ? 'error' : 'idle');
     onActiveChangeRef.current(false);
   };
@@ -118,9 +139,35 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
     }
 
     if (!samples.length) return;
-    const buffer = audioContext.createBuffer(1, samples.length, 24000);
-    const channel = buffer.getChannelData(0);
-    for (let i = 0; i < samples.length; i += 1) channel[i] = samples[i] / 32768;
+    const input = new Float32Array(samples.length);
+    for (let i = 0; i < samples.length; i += 1) input[i] = samples[i] / 32768;
+
+    // Slow the voice by linear-interpolating at `rate` source samples per output sample. Doing this
+    // here (continuously across chunks) avoids the clicks the browser's per-buffer resampling causes.
+    const rate = paceRef.current;
+    let output: Float32Array = input;
+    if (rate !== 1) {
+      const state = resamplerRef.current;
+      const out: number[] = [];
+      let t = state.pos;
+      while (Math.floor(t) + 1 <= input.length - 1) {
+        const i = Math.floor(t);
+        const frac = t - i;
+        const a = i < 0 ? state.prev : input[i];
+        out.push(a + (input[i + 1] - a) * frac);
+        t += rate;
+      }
+      state.pos = t - input.length;
+      state.prev = input[input.length - 1];
+      output = Float32Array.from(out);
+    } else {
+      resamplerRef.current = { pos: 0, prev: input[input.length - 1] };
+    }
+    if (!output.length) return;
+
+    const buffer = audioContext.createBuffer(1, output.length, 24000);
+    buffer.copyToChannel(output as Float32Array<ArrayBuffer>, 0);
+    const playDuration = buffer.duration;
 
     const source = audioContext.createBufferSource();
     source.buffer = buffer;
@@ -130,13 +177,24 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
     // Keep a small cushion ahead of the playhead. If the queue ran dry (or this is the first chunk),
     // rebuild ~150 ms of buffer so network/main-thread jitter doesn't leave audible gaps.
     const now = audioContext.currentTime;
-    const startAt = playbackTimeRef.current > now ? playbackTimeRef.current : now + 0.15;
+    const queueDry = !(playbackTimeRef.current > now);
+    const startAt = queueDry ? now + 0.15 : playbackTimeRef.current;
     source.start(startAt);
+
+    let turn = turnAudioRef.current;
+    if (turn.ended) { turn = newTurnAudio(); turnAudioRef.current = turn; }
+    turn.frozen = null;
+    if (queueDry) {
+      if (turn.runEnd > turn.runStart) turn.playedBase += turn.runEnd - turn.runStart;
+      turn.runStart = startAt;
+    }
+    turn.runEnd = startAt + playDuration;
+    turn.scheduled += playDuration;
     let sumSquares = 0;
     for (let i = 0; i < samples.length; i += 1) sumSquares += (samples[i] / 32768) ** 2;
     const chunkLevel = Math.min(1, Math.sqrt(sumSquares / samples.length) * 6);
     window.setTimeout(() => { levelsRef.current.tutor = chunkLevel; }, Math.max(0, (startAt - audioContext.currentTime) * 1000));
-    playbackTimeRef.current = startAt + buffer.duration;
+    playbackTimeRef.current = startAt + playDuration;
   };
 
   const start = async () => {
@@ -213,6 +271,9 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
               console.error('Could not play tutor audio:', audioError);
             }
           } else if (packet.type === 'interrupted') {
+            resamplerRef.current = { pos: 0, prev: 0 };
+            turnAudioRef.current.frozen = getSpeechProgress();
+            turnAudioRef.current.ended = true;
             const playback = playbackContextRef.current;
             const gain = outputGainRef.current;
             const sources = Array.from(audioSourcesRef.current);
@@ -230,6 +291,8 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
             }
           } else if (packet.type === 'transcript' || packet.type === 'assistant_text' ||
                      packet.type === 'sources' || packet.type === 'turn_complete') {
+            if (packet.type === 'assistant_text' && turnAudioRef.current.ended) turnAudioRef.current = newTurnAudio();
+            if (packet.type === 'turn_complete') turnAudioRef.current.ended = true;
             onEventRef.current(packet as unknown as VoiceLessonEvent);
           }
         });
@@ -309,6 +372,20 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
     }
   };
 
+  /**
+   * 0..1: how much of the current tutor turn has been heard. Text is revealed by this fraction so it
+   * stays in step with the voice instead of racing ahead (transcripts arrive well before playback).
+   */
+  function getSpeechProgress(): number {
+    const turn = turnAudioRef.current;
+    if (turn.frozen !== null) return turn.frozen;
+    const context = playbackContextRef.current;
+    if (!context) return 1;
+    if (turn.scheduled <= 0) return Date.now() - turn.textSince > 2500 ? 1 : 0;
+    const run = Math.min(Math.max(context.currentTime - turn.runStart, 0), turn.runEnd - turn.runStart);
+    return Math.min(1, (turn.playedBase + run) / turn.scheduled);
+  }
+
   const sendText = (content: string): boolean => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
@@ -316,5 +393,7 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
     return true;
   };
 
-  return { status, error, start, stop, sendText, levelsRef };
+  const setPace = (pace: Pace) => { paceRef.current = PACE_RATES[pace]; };
+
+  return { status, error, start, stop, sendText, levelsRef, getSpeechProgress, setPace };
 }

@@ -13,6 +13,8 @@ export interface Message {
   sources?: SourceReference[];
   created_at?: string;
   feedback?: 1 | -1 | null;
+  /** Spoken transcript: render as plain text, not markdown/math. */
+  plain?: boolean;
 }
 
 export interface DocumentItem {
