@@ -1,0 +1,11 @@
+services:
+  tutor:
+    build: .
+    ports:
+      - "8006:8006"
+    env_file: .env
+    volumes:
+      - tutor-data:/app/backend/data   # database, uploads and vector index persist here
+    restart: unless-stopped
+volumes:
+  tutor-data:

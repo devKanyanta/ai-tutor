@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { UploadCloud, CheckCircle2, Clock, AlertCircle, FileText, Trash2, RefreshCw, Upload, Check, Loader2 } from 'lucide-react';
+import { UploadCloud, CheckCircle2, Clock, AlertCircle, FileText, Trash2, RefreshCw, Upload, Check, Loader2, FileSpreadsheet, FileType2, Library } from 'lucide-react';
 import type { DocumentItem } from '../../types';
 import { api } from '../../services/api';
 
@@ -7,9 +7,10 @@ interface DocumentManagerProps {
   token: string;
   documents: DocumentItem[];
   onRefresh: () => void;
+  loading?: boolean;
 }
 
-export const DocumentManager: React.FC<DocumentManagerProps> = ({ token, documents, onRefresh }) => {
+export const DocumentManager: React.FC<DocumentManagerProps> = ({ token, documents, onRefresh, loading }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [updatingDocId, setUpdatingDocId] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -116,166 +117,124 @@ export const DocumentManager: React.FC<DocumentManagerProps> = ({ token, documen
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
+  const pill = 'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold';
   const renderStatusBadge = (status: DocumentItem['status']) => {
     switch (status) {
       case 'READY':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
-            <CheckCircle2 className="w-3.5 h-3.5" /> Ready
-          </span>
-        );
+        return <span className={`${pill} bg-board-50 text-board-700`}><CheckCircle2 className="h-3.5 w-3.5" /> Ready</span>;
       case 'INDEXING':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 animate-pulse">
-            <Clock className="w-3.5 h-3.5" /> Indexing
-          </span>
-        );
+        return <span className={`${pill} bg-ink-100 text-ink-600`}><Loader2 className="h-3.5 w-3.5 animate-spin" /> Indexing</span>;
       case 'PENDING':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">
-            <Clock className="w-3.5 h-3.5" /> Pending
-          </span>
-        );
+        return <span className={`${pill} bg-ink-100 text-ink-600`}><Clock className="h-3.5 w-3.5" /> Queued</span>;
       case 'FAILED':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-100 text-rose-800">
-            <AlertCircle className="w-3.5 h-3.5" /> Failed
-          </span>
-        );
+        return <span className={`${pill} bg-clay-50 text-clay-700`}><AlertCircle className="h-3.5 w-3.5" /> Failed</span>;
     }
   };
 
+  const typeStyle = (type: string) => {
+    if (type === 'pdf') return { icon: FileType2, cls: 'bg-clay-50 text-clay-700' };
+    if (type === 'csv') return { icon: FileSpreadsheet, cls: 'bg-board-50 text-board-700' };
+    if (type === 'docx' || type === 'doc') return { icon: FileText, cls: 'bg-board-50 text-board-600' };
+    return { icon: FileText, cls: 'bg-ink-100 text-ink-600' };
+  };
+
   return (
-    <div className="space-y-6">
-      {/* Upload Zone (REQ-IN-01) with Multi-file & Folder Drag-and-Drop */}
+    <div className="space-y-8">
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all ${
-          isDragging
-            ? 'border-indigo-500 bg-indigo-50/70 scale-[1.01]'
-            : 'border-slate-300 hover:border-indigo-400 bg-white/50'
+        className={`anim-fade-up relative rounded-lg border-2 border-dashed p-8 text-center transition-colors duration-200 sm:p-10 ${
+          isDragging ? 'border-board-500 bg-board-50' : 'border-ink-300 bg-surface hover:border-board-400'
         }`}
+        style={{ animationDelay: '400ms' }}
       >
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".pdf,.docx,.txt,.md,.csv"
-          multiple
-          onChange={handleFileChange}
-          className="hidden"
-          id="curriculum-upload"
-          disabled={isUploading}
-        />
-        <label
-          htmlFor="curriculum-upload"
-          className="flex flex-col items-center justify-center cursor-pointer"
-        >
-          <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mb-3">
-            {isUploading ? (
-              <Loader2 className="w-6 h-6 animate-spin" />
-            ) : (
-              <UploadCloud className="w-6 h-6" />
-            )}
-          </div>
-          <span className="text-sm font-semibold text-slate-700 mb-1">
+        <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt,.md,.csv" multiple onChange={handleFileChange} className="hidden" id="curriculum-upload" disabled={isUploading} />
+        <label htmlFor="curriculum-upload" className="flex cursor-pointer flex-col items-center">
+          <span className={`mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-board-800 text-[#f6f2e9]`}>
+            {isUploading ? <Loader2 className="h-7 w-7 animate-spin" /> : <UploadCloud className="h-7 w-7" />}
+          </span>
+          <span className="font-serif text-xl font-semibold text-ink-900">
             {isUploading
-              ? batchProgress
-                ? `Batch processing ${batchProgress.total} documents...`
-                : 'Indexing and embedding document...'
-              : 'Click or drop curriculum documents (or select multiple)'}
+              ? batchProgress ? `Reading ${batchProgress.total} documents…` : 'Reading and indexing your document…'
+              : isDragging ? 'Drop to add to your course' : 'Drop course materials here'}
           </span>
-          <span className="text-xs text-slate-500">
-            Supports multi-file selection: PDF, DOCX, TXT, Markdown, CSV
-          </span>
+          <span className="mt-1 text-sm text-ink-500">or <span className="font-semibold text-board-600 underline underline-offset-2">browse files</span> · PDF, Word, text, Markdown or CSV</span>
         </label>
 
         {uploadSuccess && (
-          <div className="mt-3 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 p-2 rounded-lg flex items-center justify-center gap-1.5">
-            <Check className="w-3.5 h-3.5" />
-            <span>{uploadSuccess}</span>
+          <div role="status" className="anim-rise mx-auto mt-5 flex max-w-lg items-center justify-center gap-2 rounded-lg bg-board-50 px-4 py-2.5 text-sm text-board-700">
+            <Check className="h-4 w-4 shrink-0" /> <span>{uploadSuccess}</span>
           </div>
         )}
         {uploadError && (
-          <div className="mt-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 p-2 rounded-lg flex items-center justify-center gap-1.5">
-            <AlertCircle className="w-3.5 h-3.5" />
-            <span>{uploadError}</span>
+          <div role="alert" className="anim-rise mx-auto mt-3 flex max-w-lg items-center justify-center gap-2 rounded-lg bg-clay-50 px-4 py-2.5 text-sm text-clay-700">
+            <AlertCircle className="h-4 w-4 shrink-0" /> <span>{uploadError}</span>
           </div>
         )}
       </div>
 
-      {/* Documents List (REQ-IN-03, REQ-IN-04) */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-slate-800">
-            Uploaded Materials ({documents.length})
-          </h3>
-          <button
-            onClick={onRefresh}
-            className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium"
-          >
-            <RefreshCw className="w-3.5 h-3.5" /> Refresh List
+      <section aria-label="Uploaded materials">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="font-serif text-xl font-semibold text-ink-900">
+            Uploaded materials <span className="ml-1 rounded-full bg-ink-100 px-2 py-0.5 font-sans text-xs font-semibold text-ink-600">{documents.length}</span>
+          </h2>
+          <button onClick={onRefresh} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-board-600 transition-colors hover:bg-board-50">
+            <RefreshCw className="h-4 w-4" /> Refresh
           </button>
         </div>
 
-        {documents.length === 0 ? (
-          <div className="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-400 text-sm">
-            No curriculum documents uploaded yet. Upload documents above to ground the AI Tutor.
+        {loading ? (
+          <div className="space-y-3" aria-hidden="true">{[0, 1, 2].map((i) => <div key={i} className="skeleton h-20 rounded-2xl" />)}</div>
+        ) : documents.length === 0 ? (
+          <div className="card flex flex-col items-center px-6 py-12 text-center">
+            <span className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-ink-50 text-ink-400"><Library className="h-7 w-7" /></span>
+            <p className="font-serif text-lg font-semibold text-ink-900">Your library is empty</p>
+            <p className="mt-1 max-w-sm text-sm text-ink-500">Add your first syllabus, textbook chapter or set of notes above and your students can start learning from it.</p>
           </div>
         ) : (
-          <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden shadow-2xs">
-            {documents.map((doc) => (
-              <div key={doc.id} className="p-3.5 flex items-center justify-between hover:bg-slate-50/80 transition-colors">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center shrink-0">
-                    <FileText className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold text-slate-800 truncate max-w-xs sm:max-w-md">
-                      {doc.filename}
+          <ul className="space-y-3">
+            {documents.map((doc, i) => {
+              const { icon: Icon, cls } = typeStyle(doc.file_type);
+              return (
+                <li key={doc.id} className="card anim-fade-up flex flex-wrap items-center gap-x-4 gap-y-3 p-4" style={{ animationDelay: `${i * 50}ms` }}>
+                  <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-md ${cls}`}><Icon className="h-6 w-6" /></span>
+                  <div className="min-w-0 flex-1 basis-48">
+                    <p className="truncate font-semibold text-ink-900">{doc.filename}</p>
+                    <p className="text-xs text-ink-500">
+                      {doc.file_type.toUpperCase()} · {formatFileSize(doc.file_size)} · {doc.chunk_count} sections
                     </p>
-                    <p className="text-[11px] text-slate-400 flex items-center gap-2">
-                      <span>{doc.file_type.toUpperCase()}</span>
-                      <span>•</span>
-                      <span>{formatFileSize(doc.file_size)}</span>
-                      <span>•</span>
-                      <span>{doc.chunk_count} semantic chunks</span>
-                    </p>
+                    {doc.status === 'FAILED' && doc.error_message && (
+                      <p className="mt-1 text-xs text-clay-700">{doc.error_message}</p>
+                    )}
                   </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {renderStatusBadge(doc.status)}
-                  <button
-                    onClick={() => triggerUpdate(doc.id)}
-                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                    title="Update/Replace document file (REQ-IN-03)"
-                  >
-                    <Upload className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(doc.id, doc.filename)}
-                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                    title="Delete document"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+                  <div className="flex items-center gap-1.5">
+                    {renderStatusBadge(doc.status)}
+                    <button
+                      onClick={() => triggerUpdate(doc.id)}
+                      className="rounded-lg p-2.5 text-ink-400 transition-colors hover:bg-board-50 hover:text-board-600"
+                      title="Replace with a new version"
+                      aria-label={`Replace ${doc.filename} with a new version`}
+                    >
+                      <Upload className="h-[18px] w-[18px]" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(doc.id, doc.filename)}
+                      className="rounded-lg p-2.5 text-ink-400 transition-colors hover:bg-clay-50 hover:text-clay-700"
+                      title="Delete"
+                      aria-label={`Delete ${doc.filename}`}
+                    >
+                      <Trash2 className="h-[18px] w-[18px]" />
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         )}
-      </div>
+      </section>
 
-      {/* Hidden file input for update action */}
-      <input
-        ref={updateFileInputRef}
-        type="file"
-        accept=".pdf,.docx,.txt,.md,.csv"
-        onChange={handleUpdateFileChange}
-        className="hidden"
-      />
+      <input ref={updateFileInputRef} type="file" accept=".pdf,.docx,.txt,.md,.csv" onChange={handleUpdateFileChange} className="hidden" />
     </div>
   );
 };

@@ -3,6 +3,7 @@ import time
 import json
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 from app.main import app
 from app.core.config import settings
 
@@ -14,6 +15,18 @@ def test_health_check():
         data = response.json()
         assert data["status"] == "healthy"
         assert "indexed_chunks" in data
+
+def test_voice_lesson_requires_gemini_configuration(monkeypatch):
+    """Keep the voice endpoint usable only when the server-side Gemini key is configured."""
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/chat/voice/test-session") as websocket:
+            message = websocket.receive_json()
+            assert message["type"] == "error"
+            assert "not configured" in message["message"].lower()
+            with pytest.raises(WebSocketDisconnect):
+                websocket.receive_json()
+
 
 def test_admin_auth():
     """Verify admin login failure and success (SEC-02)."""
@@ -161,3 +174,23 @@ def test_document_lifecycle_rag_and_kpis():
         # 9. Delete document (REQ-IN-03)
         del_res = client.delete(f"/api/admin/documents/{doc_id}", headers=headers)
         assert del_res.status_code == 200
+
+
+def test_upload_filename_cannot_escape_upload_dir():
+    with TestClient(app) as client:
+        headers = {"Authorization": f"Bearer {settings.ADMIN_TOKEN}"}
+        res = client.post(
+            "/api/admin/documents/upload",
+            files={"file": ("../../evil.txt", io.BytesIO(b"Photosynthesis converts light to energy."), "text/plain")},
+            headers=headers,
+        )
+        assert res.status_code == 200
+        assert res.json()["filename"] == "evil.txt"
+        assert not (settings.UPLOAD_DIR.parent.parent / "evil.txt").exists()
+        client.delete(f"/api/admin/documents/{res.json()['id']}", headers=headers)
+
+
+def test_chat_rejects_invalid_payloads():
+    with TestClient(app) as client:
+        assert client.post("/api/chat/stream", json={"session_id": "s", "message": ""}).status_code == 422
+        assert client.post("/api/chat/feedback", json={"session_id": "s", "message_id": "m", "rating": 5}).status_code == 422

@@ -29,25 +29,26 @@ class TextChunker:
                     chunks.append(chunk)
                 break
 
-            # Find convenient break point (paragraph or sentence)
-            break_point = text.rfind("\n\n", start, end)
-            if break_point == -1 or break_point <= start:
-                break_point = text.rfind("\n", start, end)
-            if break_point == -1 or break_point <= start:
-                break_point = text.rfind(". ", start, end)
-                if break_point != -1:
-                    break_point += 1
-            if break_point == -1 or break_point <= start:
-                break_point = text.rfind(" ", start, end)
+            # Search backward from end for a good delimiter in the latter portion of the window
+            min_break = start + max(1, self.chunk_size // 3)
+            break_point = -1
+            for delim in ["\n\n", "\n", ". ", "? ", "! ", "; ", ", ", " "]:
+                pos = text.rfind(delim, min_break, end)
+                if pos != -1:
+                    break_point = pos + len(delim.rstrip())
+                    break
 
-            if break_point == -1 or break_point <= start:
+            if break_point <= start:
                 break_point = end
 
             chunk = text[start:break_point].strip()
             if chunk:
                 chunks.append(chunk)
 
-            # Advance start with overlap
-            start = max(start + 1, break_point - self.chunk_overlap)
+            # Advance start ensuring progress beyond break_point - chunk_overlap
+            next_start = max(start + (self.chunk_size - self.chunk_overlap), break_point - self.chunk_overlap)
+            if next_start <= start:
+                next_start = break_point
+            start = next_start
 
         return chunks

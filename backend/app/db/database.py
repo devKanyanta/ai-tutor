@@ -6,6 +6,7 @@ from app.core.config import settings
 def init_db():
     """Initialize SQLite database schema."""
     conn = sqlite3.connect(settings.DB_PATH)
+    conn.execute("PRAGMA journal_mode=WAL")
     cursor = conn.cursor()
     
     # Documents table (REQ-IN-03, REQ-IN-04)
@@ -42,10 +43,27 @@ def init_db():
     CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         title TEXT,
+        current_topic TEXT,
+        lesson_stage TEXT DEFAULT 'INIT', -- INIT, HOOK, CONCEPT, REAL_WORLD_EXAMPLE, CHECK_UNDERSTANDING, SYNTHESIS
+        understanding_score INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
+
+    # Ensure columns exist if table was already created
+    try:
+        cursor.execute("ALTER TABLE sessions ADD COLUMN current_topic TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE sessions ADD COLUMN lesson_stage TEXT DEFAULT 'INIT'")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE sessions ADD COLUMN understanding_score INTEGER DEFAULT 0")
+    except Exception:
+        pass
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS messages (
@@ -86,7 +104,7 @@ def init_db():
 
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(settings.DB_PATH)
+    conn = sqlite3.connect(settings.DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
     try:
         yield conn

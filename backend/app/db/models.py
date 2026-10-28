@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime
 
 class DocumentResponse(BaseModel):
@@ -44,13 +44,13 @@ class ChatMessage(BaseModel):
     created_at: Optional[str] = None
 
 class ChatRequest(BaseModel):
-    session_id: str
-    message: str
+    session_id: str = Field(min_length=1, max_length=100)
+    message: str = Field(min_length=1, max_length=4000)
 
 class FeedbackRequest(BaseModel):
     session_id: str
     message_id: str
-    rating: int # 1 or -1
+    rating: Literal[1, -1]  # thumbs up / thumbs down
     comment: Optional[str] = None
 
 class FeedbackResponse(BaseModel):

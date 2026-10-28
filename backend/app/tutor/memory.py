@@ -17,6 +17,10 @@ class ConversationMemory:
                 row = db.execute("SELECT id FROM sessions WHERE id = ?", (session_id,)).fetchone()
                 if row:
                     return session_id
+                # Insert with the requested session_id if provided
+                db.execute("INSERT INTO sessions (id, title) VALUES (?, ?)", (session_id, "New Learning Session"))
+                db.commit()
+                return session_id
 
             new_id = str(uuid.uuid4())
             db.execute("INSERT INTO sessions (id, title) VALUES (?, ?)", (new_id, "New Learning Session"))
@@ -74,11 +78,73 @@ class ConversationMemory:
             })
         return messages
 
+    def count_user_messages(self, session_id: str) -> int:
+        """Total student turns in the session (not capped by the prompt history window)."""
+        with get_db() as db:
+            row = db.execute(
+                "SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND role = 'user'",
+                (session_id,)
+            ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def get_session_state(self, session_id: str) -> Dict[str, Any]:
+        """Fetch current pedagogical tracking state for this learning session."""
+        with get_db() as db:
+            row = db.execute(
+                "SELECT title, current_topic, lesson_stage, understanding_score FROM sessions WHERE id = ?",
+                (session_id,)
+            ).fetchone()
+            if row:
+                return {
+                    "title": row["title"],
+                    "current_topic": row["current_topic"] or "",
+                    "lesson_stage": row["lesson_stage"] or "HOOK",
+                    "understanding_score": row["understanding_score"] or 0
+                }
+            return {
+                "title": "New Learning Session",
+                "current_topic": "",
+                "lesson_stage": "HOOK",
+                "understanding_score": 0
+            }
+
+    def update_session_state(
+        self,
+        session_id: str,
+        current_topic: Optional[str] = None,
+        lesson_stage: Optional[str] = None,
+        understanding_score: Optional[int] = None
+    ):
+        """Update current lesson stage and topic progression."""
+        with get_db() as db:
+            updates = []
+            params = []
+            if current_topic is not None:
+                updates.append("current_topic = ?")
+                params.append(current_topic)
+            if lesson_stage is not None:
+                updates.append("lesson_stage = ?")
+                params.append(lesson_stage)
+            if understanding_score is not None:
+                updates.append("understanding_score = ?")
+                params.append(understanding_score)
+            
+            if updates:
+                params.append(session_id)
+                db.execute(
+                    f"UPDATE sessions SET {', '.join(updates)}, last_active = CURRENT_TIMESTAMP WHERE id = ?",
+                    tuple(params)
+                )
+                db.commit()
+
     def clear_session(self, session_id: str):
         """Reset conversation history for the session (REQ-UI-04)."""
         with get_db() as db:
             db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-            db.execute("UPDATE sessions SET last_active = CURRENT_TIMESTAMP WHERE id = ?", (session_id,))
+            db.execute(
+                "UPDATE sessions SET current_topic = NULL, lesson_stage = 'HOOK', understanding_score = 0, last_active = CURRENT_TIMESTAMP WHERE id = ?",
+                (session_id,)
+            )
             db.commit()
 
 memory = ConversationMemory()

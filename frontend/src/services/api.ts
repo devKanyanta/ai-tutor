@@ -1,6 +1,9 @@
-import type { DocumentItem, Metrics, BatchUploadResult } from '../types';
+import type { DocumentItem, Metrics, BatchUploadResult, LessonState } from '../types';
 
-const BASE_URL = '/api';
+// Relative by default: Vite proxies /api in dev, and the backend (or reverse proxy) serves it in production.
+export const BASE_URL: string = import.meta.env.VITE_API_BASE || '/api';
+
+export const UNAUTHORIZED = 'UNAUTHORIZED';
 
 export const api = {
   // Chat APIs
@@ -13,6 +16,12 @@ export const api = {
   getSessionHistory: async (sessionId: string) => {
     const res = await fetch(`${BASE_URL}/chat/history/${sessionId}`);
     if (!res.ok) throw new Error('Failed to fetch session history');
+    return res.json();
+  },
+
+  getSessionState: async (sessionId: string): Promise<LessonState> => {
+    const res = await fetch(`${BASE_URL}/chat/session/${encodeURIComponent(sessionId)}/state`);
+    if (!res.ok) throw new Error('Failed to fetch lesson state');
     return res.json();
   },
 
@@ -50,6 +59,7 @@ export const api = {
     const res = await fetch(`${BASE_URL}/admin/documents`, {
       headers: { Authorization: `Bearer ${token}` },
     });
+    if (res.status === 401) throw new Error(UNAUTHORIZED);
     if (!res.ok) throw new Error('Failed to fetch documents');
     return res.json();
   },
@@ -112,6 +122,7 @@ export const api = {
     const res = await fetch(`${BASE_URL}/admin/metrics`, {
       headers: { Authorization: `Bearer ${token}` },
     });
+    if (res.status === 401) throw new Error(UNAUTHORIZED);
     if (!res.ok) throw new Error('Failed to fetch metrics');
     return res.json();
   },

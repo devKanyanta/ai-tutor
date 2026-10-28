@@ -38,7 +38,7 @@ class IngestionPipeline:
                 raise ValueError("No text chunks generated.")
 
             # 3. Generate embeddings
-            vectors = embedding_client.embed_texts(chunks)
+            vectors = embedding_client.embed_texts(chunks, strict=True)
 
             # 4. Save chunks to SQLite
             with get_db() as db:

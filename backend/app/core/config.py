@@ -19,18 +19,25 @@ class Settings(BaseSettings):
     
     # Gemini LLM & Embeddings
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-004")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    GEMINI_LIVE_MODEL: str = os.getenv("GEMINI_LIVE_MODEL", "gemini-3.8-live")
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
     
     # Admin security
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123")
     ADMIN_TOKEN: str = os.getenv("ADMIN_TOKEN", "tutor-admin-secret-token")
     
+    # Deployment
+    # Comma-separated list of allowed browser origins. "*" is fine when the frontend is served
+    # by this backend (same origin); set your real domain(s) if hosting the frontend elsewhere.
+    CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "*")
+    FRONTEND_DIST: Path = Path(os.getenv("FRONTEND_DIST", str(BASE_DIR.parent / "frontend" / "dist")))
+
     # RAG Settings
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 100
     RETRIEVAL_TOP_K: int = 4
-    SIMILARITY_THRESHOLD: float = 0.35  # Below this threshold, question is considered out-of-bounds
+    SIMILARITY_THRESHOLD: float = 0.55  # Below this threshold, question is considered out-of-bounds
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

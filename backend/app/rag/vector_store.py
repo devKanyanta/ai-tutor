@@ -1,5 +1,6 @@
 import os
 import json
+import threading
 import logging
 import numpy as np
 from pathlib import Path
@@ -22,40 +23,44 @@ class GeminiEmbeddingClient:
             except Exception as e:
                 logger.warning(f"Failed to initialize Google GenAI Client: {e}")
 
-    def embed_texts(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings for a list of texts using text-embedding-004."""
+    def embed_texts(self, texts: List[str], *, strict: bool = False) -> List[List[float]]:
+        """
+        Generate embeddings for a list of texts.
+
+        With strict=True (document indexing) API failures raise instead of silently
+        falling back to hash vectors, which would pollute the index with mismatched embeddings.
+        """
         if not texts:
             return []
-        
-        # If API key is present and client initialized, use real Gemini Embeddings
+
         if self.client:
             try:
-                embeddings = []
-                for text in texts:
+                embeddings: List[List[float]] = []
+                batch_size = 50
+                for i in range(0, len(texts), batch_size):
+                    batch = texts[i:i + batch_size]
                     response = self.client.models.embed_content(
                         model=settings.EMBEDDING_MODEL,
-                        contents=text,
+                        contents=batch,
                     )
-                    # response.embedding.values is the vector
-                    if hasattr(response, "embedding") and hasattr(response.embedding, "values"):
-                        embeddings.append(response.embedding.values)
-                    elif hasattr(response, "embeddings") and len(response.embeddings) > 0:
-                        embeddings.append(response.embeddings[0].values)
-                    else:
+                    vectors = [e.values for e in (response.embeddings or [])]
+                    if len(vectors) != len(batch):
                         raise ValueError("Unexpected response format from Gemini embed_content")
+                    embeddings.extend(vectors)
                 return embeddings
             except Exception as e:
                 logger.error(f"Error calling Gemini Embedding API: {e}")
-                # Fall back to deterministic fallback if API fails
+                if strict:
+                    raise RuntimeError(f"Embedding service failed: {e}") from e
                 return [self._fallback_embedding(t) for t in texts]
 
-        # Deterministic semantic-like fallback embedding for offline/testing when no key is set
+        # Deterministic fallback embedding for offline/testing when no key is set
         return [self._fallback_embedding(t) for t in texts]
 
     def embed_query(self, query: str) -> List[float]:
         return self.embed_texts([query])[0]
 
-    def _fallback_embedding(self, text: str, dim: int = 768) -> List[float]:
+    def _fallback_embedding(self, text: str, dim: int = 3072) -> List[float]:
         """Deterministic, process-stable term-frequency hash embedding vector for testing/offline mode."""
         import hashlib
         import re
@@ -78,13 +83,15 @@ class EmbeddedVectorStore:
     Provides fast (<500ms per PERF-02) cosine similarity search without external services.
     """
 
-    def __init__(self, storage_dir: Optional[Path] = None):
+    def __init__(self, storage_dir: Optional[Path] = None, vector_dim: int = 3072):
         self.storage_dir = storage_dir or settings.VECTOR_STORE_DIR
         self.vectors_file = self.storage_dir / "vectors.npy"
         self.metadata_file = self.storage_dir / "metadata.json"
+        self.vector_dim = vector_dim
         
-        self.embeddings: np.ndarray = np.empty((0, 768), dtype=np.float32)
+        self.embeddings: np.ndarray = np.empty((0, vector_dim), dtype=np.float32)
         self.metadata: List[Dict[str, Any]] = []
+        self._lock = threading.RLock()
         self._load()
 
     def _load(self):
@@ -97,10 +104,10 @@ class EmbeddedVectorStore:
                 logger.info(f"Loaded {len(self.metadata)} vectors from local store.")
             except Exception as e:
                 logger.error(f"Failed to load vector store: {e}")
-                self.embeddings = np.empty((0, 768), dtype=np.float32)
+                self.embeddings = np.empty((0, self.vector_dim), dtype=np.float32)
                 self.metadata = []
         else:
-            self.embeddings = np.empty((0, 768), dtype=np.float32)
+            self.embeddings = np.empty((0, self.vector_dim), dtype=np.float32)
             self.metadata = []
 
     def _save(self):
@@ -114,7 +121,10 @@ class EmbeddedVectorStore:
         """Add document chunks and corresponding embedding vectors to index."""
         if not chunks or not vectors:
             return
+        with self._lock:
+            self._add_chunks_locked(document_id, filename, chunks, vectors)
 
+    def _add_chunks_locked(self, document_id: str, filename: str, chunks: List[str], vectors: List[List[float]]):
         new_vecs = np.array(vectors, dtype=np.float32)
         # Normalize vectors for fast cosine similarity dot product
         norms = np.linalg.norm(new_vecs, axis=1, keepdims=True)
@@ -145,6 +155,10 @@ class EmbeddedVectorStore:
 
     def delete_document(self, document_id: str):
         """Remove all chunks associated with a document_id (REQ-IN-03)."""
+        with self._lock:
+            self._delete_document_locked(document_id)
+
+    def _delete_document_locked(self, document_id: str):
         keep_indices = [i for i, meta in enumerate(self.metadata) if meta.get("document_id") != document_id]
         if len(keep_indices) == len(self.metadata):
             return
@@ -153,7 +167,7 @@ class EmbeddedVectorStore:
             self.embeddings = self.embeddings[keep_indices]
             self.metadata = [self.metadata[i] for i in keep_indices]
         else:
-            self.embeddings = np.empty((0, 768), dtype=np.float32)
+            self.embeddings = np.empty((0, self.vector_dim), dtype=np.float32)
             self.metadata = []
 
         self._save()
@@ -163,7 +177,9 @@ class EmbeddedVectorStore:
         Cosine similarity retrieval in sub-millisecond execution (PERF-02).
         Returns top_k items with relevance scores.
         """
-        if self.embeddings.shape[0] == 0 or not self.metadata:
+        with self._lock:
+            embeddings, metadata = self.embeddings, self.metadata
+        if embeddings.shape[0] == 0 or not metadata:
             return []
 
         q_vec = np.array(query_vector, dtype=np.float32)
@@ -172,7 +188,9 @@ class EmbeddedVectorStore:
             q_vec = q_vec / q_norm
 
         # Cosine similarity via dot product against normalized vectors
-        scores = np.dot(self.embeddings, q_vec)
+        if embeddings.shape[1] != q_vec.shape[0]:
+            return []
+        scores = np.dot(embeddings, q_vec)
         
         # Sort descending
         top_indices = np.argsort(scores)[::-1][:top_k]
@@ -180,7 +198,7 @@ class EmbeddedVectorStore:
         results = []
         for idx in top_indices:
             score = float(scores[idx])
-            meta = self.metadata[idx].copy()
+            meta = metadata[idx].copy()
             meta["score"] = score
             results.append(meta)
 

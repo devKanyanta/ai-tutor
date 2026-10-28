@@ -1,4 +1,5 @@
 import re
+import hmac
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import settings
@@ -7,7 +8,7 @@ security_scheme = HTTPBearer(auto_error=False)
 
 def verify_admin_token(credentials: HTTPAuthorizationCredentials = Security(security_scheme)) -> bool:
     """Validate Bearer token for protected Admin endpoints (SEC-02)."""
-    if not credentials or credentials.credentials != settings.ADMIN_TOKEN:
+    if not credentials or not hmac.compare_digest(credentials.credentials, settings.ADMIN_TOKEN):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing admin credentials",

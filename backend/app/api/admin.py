@@ -1,3 +1,4 @@
+import asyncio
 import os
 import shutil
 import uuid
@@ -20,6 +21,11 @@ from app.ingestion.pipeline import pipeline
 from app.rag.vector_store import vector_store
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+def _safe_filename(name: str | None) -> str:
+    """Strip any directory components so uploads can't escape UPLOAD_DIR."""
+    cleaned = Path((name or "").replace("\\", "/")).name.strip()
+    return cleaned or "unknown"
 
 @router.post("/login", response_model=AdminLoginResponse)
 async def admin_login(payload: AdminLoginRequest):
@@ -60,6 +66,7 @@ async def upload_document(
     """
     Upload and index curriculum material: PDF, TXT, DOCX, MD, CSV (REQ-IN-01..04).
     """
+    file.filename = _safe_filename(file.filename)
     ext = file.filename.split(".")[-1].lower() if "." in file.filename else ""
     allowed_exts = {"pdf", "txt", "docx", "doc", "md", "markdown", "csv"}
     if ext not in allowed_exts:
@@ -97,7 +104,8 @@ async def upload_document(
 
     # Process and index document
     try:
-        pipeline.process_file(
+        await asyncio.to_thread(
+            pipeline.process_file,
             doc_id=doc_id,
             file_path=save_path,
             filename=file.filename,
@@ -135,7 +143,7 @@ async def batch_upload_documents(
     failed: List[dict] = []
 
     for file in files:
-        filename = file.filename or "unknown"
+        filename = _safe_filename(file.filename)
         ext = filename.split(".")[-1].lower() if "." in filename else ""
         if ext not in allowed_exts:
             failed.append({
@@ -164,7 +172,8 @@ async def batch_upload_documents(
                 )
                 db.commit()
 
-            pipeline.process_file(
+            await asyncio.to_thread(
+                pipeline.process_file,
                 doc_id=doc_id,
                 file_path=save_path,
                 filename=filename,
@@ -206,6 +215,7 @@ async def update_document(
     Update/refresh an existing curriculum document with a new revision (REQ-IN-03).
     Re-parses, re-chunks, and updates the vector store without changing document ID.
     """
+    file.filename = _safe_filename(file.filename)
     ext = file.filename.split(".")[-1].lower() if "." in file.filename else ""
     allowed_exts = {"pdf", "txt", "docx", "doc", "md", "markdown", "csv"}
     if ext not in allowed_exts:
@@ -250,7 +260,8 @@ async def update_document(
 
     # Re-index through pipeline
     try:
-        pipeline.process_file(
+        await asyncio.to_thread(
+            pipeline.process_file,
             doc_id=doc_id,
             file_path=save_path,
             filename=file.filename,
@@ -310,7 +321,9 @@ async def get_metrics(authorized: bool = Depends(verify_admin_token)):
         total_messages = db.execute("SELECT COUNT(*) as c FROM messages").fetchone()["c"]
         
         # KPI-2: Session Engagement (Average turns / messages per session)
-        avg_turns = round(float(total_messages) / float(total_sessions), 1) if total_sessions > 0 else 0.0
+        # Only sessions with at least one message count (every page load creates a session).
+        active_sessions = db.execute("SELECT COUNT(DISTINCT session_id) as c FROM messages").fetchone()["c"]
+        avg_turns = round(float(total_messages) / float(active_sessions), 1) if active_sessions > 0 else 0.0
 
         # KPI-3: Out-of-Bounds Deflection Count
         deflection_row = db.execute("SELECT COUNT(*) as c FROM deflections").fetchone()

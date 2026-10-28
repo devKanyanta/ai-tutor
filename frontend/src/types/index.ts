@@ -45,3 +45,9 @@ export interface Metrics {
   feedback_negative: number;
   positive_ratio: number;
 }
+
+export interface LessonState {
+  lesson_stage: string;
+  current_topic: string;
+  student_turns: number;
+}

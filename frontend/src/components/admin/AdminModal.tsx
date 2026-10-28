@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Lock, X, AlertCircle, Loader2 } from 'lucide-react';
 import { api } from '../../services/api';
 
@@ -13,72 +13,69 @@ export const AdminModal: React.FC<AdminModalProps> = ({ isOpen, onClose, onLogin
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setIsLoading(true);
-
     try {
       const res = await api.adminLogin(password);
       onLoginSuccess(res.token);
       setPassword('');
       onClose();
-    } catch (err: any) {
-      setError(err.message || 'Authentication failed');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Authentication failed');
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-      <div className="bg-white rounded-2xl border border-slate-200 max-w-sm w-full p-6 shadow-xl relative animate-in fade-in zoom-in-95 duration-150">
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1 rounded-lg"
-        >
-          <X className="w-4 h-4" />
+    <div
+      className="anim-fade-in fixed inset-0 z-50 flex items-end justify-center bg-ink-900/50 p-4 sm:items-center"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title" className="anim-rise relative w-full max-w-sm overflow-hidden rounded-lg border border-ink-200 bg-surface p-7 shadow-xl">
+        <button onClick={onClose} className="absolute right-3 top-3 rounded-lg p-2 text-ink-400 hover:bg-ink-50 hover:text-ink-700" aria-label="Close dialog">
+          <X className="h-5 w-5" />
         </button>
 
-        <div className="w-10 h-10 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center mb-3">
-          <Lock className="w-5 h-5" />
-        </div>
-
-        <h3 className="text-base font-bold text-slate-800">Admin Authentication</h3>
-        <p className="text-xs text-slate-500 mb-4">
-          Enter instructor password to manage curriculum materials and review engagement metrics.
-        </p>
+        <span className="relative mb-4 flex h-11 w-11 items-center justify-center rounded-md bg-board-800 text-[#f6f2e9]">
+          <Lock className="h-6 w-6" />
+        </span>
+        <h3 id="admin-dialog-title" className="relative text-2xl font-semibold text-ink-900">Instructor sign-in</h3>
+        <p className="relative mb-5 mt-1 text-sm text-ink-500">Enter your password to manage course materials and see how students are doing.</p>
 
         {error && (
-          <div className="flex items-center gap-1.5 p-2.5 mb-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{error}</span>
+          <div role="alert" className="anim-rise mb-4 flex items-center gap-2 rounded-lg bg-clay-50 px-3 py-2.5 text-sm text-clay-700">
+            <AlertCircle className="h-4 w-4 shrink-0" /> <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-3">
+        <form onSubmit={handleSubmit} className="relative space-y-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Admin Password
-            </label>
+            <label htmlFor="admin-password" className="mb-1.5 block text-sm font-semibold text-ink-800">Password</label>
             <input
+              id="admin-password"
               type="password"
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Default: admin123"
-              className="w-full text-sm px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              placeholder="Enter your admin password"
+              className="w-full rounded-lg border border-ink-300 bg-white px-4 py-3 text-sm focus:border-board-500 focus:outline-none focus:ring-2 focus:ring-board-500/20"
               autoFocus
             />
           </div>
-
-          <button
-            type="submit"
-            disabled={!password || isLoading}
-            className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs rounded-xl flex items-center justify-center gap-2 disabled:opacity-50 transition-colors shadow-2xs"
-          >
-            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Log In'}
+          <button type="submit" disabled={!password || isLoading} className="btn btn-primary w-full !py-3">
+            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Sign in'}
           </button>
         </form>
       </div>
