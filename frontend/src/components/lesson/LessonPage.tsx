@@ -69,6 +69,8 @@ export const LessonPage: React.FC = () => {
   const [booting, setBooting] = useState(true);
   const [lesson, setLesson] = useState<LessonState>({ lesson_stage: 'INIT', current_topic: '', student_turns: 0 });
   const [progress, setProgress] = useState(1);
+  const [statusMessage, setStatusMessage] = useState('');
+  const [banner, setBanner] = useState('');
   const [pace, setPaceState] = useState<Pace>(() => {
     try { const v = localStorage.getItem('ai_tutor_pace'); return v === 'normal' || v === 'slow' ? v : 'relaxed'; } catch { return 'relaxed'; }
   });
@@ -109,6 +111,9 @@ export const LessonPage: React.FC = () => {
   useEffect(() => { void initSession(); }, [initSession]);
 
   const handleVoiceEvent = (event: VoiceLessonEvent) => {
+    if (event.type === 'status') { setStatusMessage(event.message || ''); return; }
+    if (event.type === 'lesson' && event.lesson) { setLesson(event.lesson); return; }
+    if (event.type === 'assistant_text' || event.type === 'turn_complete') setStatusMessage('');
     if (event.type === 'transcript' && event.content?.trim()) {
       const text = event.content.trim();
       const continuing = lastVoiceRole.current === 'user';
@@ -177,8 +182,8 @@ export const LessonPage: React.FC = () => {
     if (!isVoiceActive) { setProgress(1); return; }
     const timer = window.setInterval(() => {
       const next = voice.getSpeechProgress();
-      setProgress((prev) => (Math.abs(prev - next) < 0.004 ? prev : next));
-    }, 80);
+      setProgress((prev) => (next >= 1 || Math.abs(prev - next) >= 0.01 ? next : prev));
+    }, 120);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isVoiceActive]);
@@ -237,8 +242,10 @@ export const LessonPage: React.FC = () => {
           if (!payload) continue;
           try {
             const event = JSON.parse(payload);
-            if (event.type === 'sources') patch((m) => ({ ...m, sources: event.sources }));
-            else if (event.type === 'token') { accumulated += event.content; patch((m) => ({ ...m, content: accumulated })); }
+            if (event.type === 'status') setStatusMessage(event.message || '');
+            else if (event.type === 'lesson') setLesson(event.lesson);
+            else if (event.type === 'sources') patch((m) => ({ ...m, sources: event.sources }));
+            else if (event.type === 'token') { setStatusMessage(''); accumulated += event.content; patch((m) => ({ ...m, content: accumulated })); }
             else if (event.type === 'error') patch((m) => ({ ...m, content: accumulated || 'Sorry, something went wrong while answering. Please try again.' }));
             else if (event.type === 'done') patch((m) => ({ ...m, id: event.message_id || m.id }));
           } catch (err) {
@@ -251,9 +258,41 @@ export const LessonPage: React.FC = () => {
       patch((m) => ({ ...m, content: 'We could not reach your tutor. Please check your connection and try again.' }));
     } finally {
       setIsLoading(false);
+      setStatusMessage('');
       void refreshLesson(sessionId);
     }
   };
+
+  const startNewTopic = async () => {
+    if (!sessionId || isLoading) return;
+    try {
+      setLesson(await api.resetLesson(sessionId));
+      setBanner('New topic: ask about anything in your course');
+    } catch (err) {
+      console.error('Reset lesson error:', err);
+    }
+  };
+
+  // Announce phase changes on the board for a few seconds.
+  const lastStage = useRef('INIT');
+  useEffect(() => {
+    const stage = lesson.lesson_stage;
+    if (stage === lastStage.current) return;
+    const previous = lastStage.current;
+    lastStage.current = stage;
+    if (stage === 'INIT' || previous === 'INIT' && stage === 'WARMUP') {
+      if (stage === 'WARMUP') setBanner(lesson.current_topic ? `Lesson plan ready: ${lesson.current_topic}` : '');
+      return;
+    }
+    const label = stage === 'DONE' ? 'Lesson complete' : `Now: ${lesson.phases?.find((p) => p.id === stage)?.label ?? stage}`;
+    setBanner(label);
+  }, [lesson.lesson_stage, lesson.current_topic, lesson.phases]);
+
+  useEffect(() => {
+    if (!banner) return;
+    const timer = window.setTimeout(() => setBanner(''), 3800);
+    return () => window.clearTimeout(timer);
+  }, [banner]);
 
   const newSession = async () => {
     if (!sessionId || isVoiceActive || isLoading) return;
@@ -262,6 +301,7 @@ export const LessonPage: React.FC = () => {
       await api.clearSession(sessionId);
       setMessages([]);
       setLesson({ lesson_stage: 'INIT', current_topic: '', student_turns: 0 });
+      lastStage.current = 'INIT';
       const created = await api.createNewSession();
       setSessionId(created.session_id);
       localStorage.setItem('ai_tutor_session_id', created.session_id);
@@ -282,7 +322,7 @@ export const LessonPage: React.FC = () => {
   const last = messages[messages.length - 1];
   const voiceStreaming = last?.role === "assistant" && (last.id.startsWith("voice-assistant-") || (isVoiceActive && !!last.plain && progress < 1));
   const streaming = isLoading || !!voiceStreaming;
-  const thinking = isLoading && last?.role === 'assistant' && !last.content;
+  const thinking = (isLoading && last?.role === 'assistant' && !last.content) || (isVoiceActive && !!statusMessage);
 
   const orbMode = voice.status === 'listening' ? 'live' : voice.status === 'connecting' ? 'connecting' : 'idle';
   const statusLine =
@@ -300,7 +340,7 @@ export const LessonPage: React.FC = () => {
         <div className="flex min-w-0 items-center gap-6">
           <Logo />
           <div className="hidden md:block">
-            <LessonProgress stage={lesson.lesson_stage} active={lesson.student_turns > 0} />
+            <LessonProgress lesson={lesson} busy={isLoading || isVoiceActive} onNewTopic={() => void startNewTopic()} />
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -310,7 +350,7 @@ export const LessonPage: React.FC = () => {
           <Link to="/studio" className="hidden px-2 py-2 text-xs font-medium text-ink-600 hover:text-ink-900 sm:block">Instructors</Link>
         </div>
       </header>
-      <div className="border-b border-ink-200 bg-surface px-4 py-1.5 md:hidden"><LessonProgress stage={lesson.lesson_stage} active={lesson.student_turns > 0} /></div>
+      <div className="border-b border-ink-200 bg-surface px-4 py-1.5 md:hidden"><LessonProgress lesson={lesson} busy={isLoading || isVoiceActive} onNewTopic={() => void startNewTopic()} /></div>
 
       {initError && (
         <div role="alert" className="flex items-center justify-between gap-3 border-b border-mark-400/50 bg-mark-300/30 px-4 py-2 text-sm text-ink-800">
@@ -321,12 +361,18 @@ export const LessonPage: React.FC = () => {
 
       <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1fr)_24rem] lg:grid-rows-1">
         {/* Board (tutor) */}
-        <div className="min-h-0">
+        <div className="relative min-h-0">
+          {banner && (
+            <div key={banner} role="status" className="anim-rise pointer-events-none absolute left-1/2 top-6 z-20 -translate-x-1/2 rounded-full border border-white/20 bg-board-950/90 px-4 py-1.5 text-xs font-medium text-mark-300 shadow-lg sm:top-9">
+              {banner}
+            </div>
+          )}
           {booting ? <div className="skeleton h-full" aria-hidden="true" /> : (
             <SlideDeck
               turns={tutorTurns}
               streaming={streaming}
               thinking={thinking}
+              thinkingLabel={statusMessage || undefined}
               followLive={isVoiceActive}
               starters={STARTERS}
               disabled={!sessionId || (isVoiceActive && voice.status !== 'listening')}
@@ -343,6 +389,11 @@ export const LessonPage: React.FC = () => {
             <div className="min-w-0 lg:mt-4 lg:w-full lg:text-center">
               <p className="text-sm font-semibold text-ink-900" role="status" aria-live="polite">{statusLine}</p>
               <div className="mt-2 lg:mt-3">
+                {voice.status === 'listening' && speaker === 'tutor' && (
+                  <button onClick={voice.interrupt} className="btn btn-ghost mb-2 !px-4 !py-2 text-sm lg:w-full" title="Stop the tutor and speak">
+                    Interrupt
+                  </button>
+                )}
                 {voice.status === 'listening' || voice.status === 'connecting' ? (
                   <button onClick={voice.stop} disabled={voice.status === 'connecting'} className="btn btn-danger !px-4 !py-2 text-sm lg:w-full">
                     {voice.status === 'connecting' ? <Loader2 className="h-4 w-4 animate-spin" /> : <MicOff className="h-4 w-4" />} End voice lesson

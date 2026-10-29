@@ -15,6 +15,7 @@ from app.tutor.prompts import (
     check_jailbreak_attempt,
     is_simple_greeting
 )
+from app.tutor import lesson
 from app.tutor.memory import memory
 
 logger = logging.getLogger(__name__)
@@ -147,16 +148,25 @@ class TutorEngine:
                 # Append last context to anchor conversational follow-ups
                 retrieval_query = f"{' '.join(recent_context_snippets)} {user_message}"
 
-        chunks, is_in_bounds = await asyncio.to_thread(retriever.retrieve, retrieval_query)
+        # Lesson orchestration: plan a new lesson, advance/hold/answer a side question, and retrieve
+        # context for the current step (see app/tutor/lesson.py). Status messages stream while planning.
+        status_queue: asyncio.Queue = asyncio.Queue()
 
-        # If still not in bounds but there are past turns in this session that were grounded,
-        # try retrieving using the prior conversational turn to keep Socratic flow alive
-        if not is_in_bounds and past_turns and is_short_conversational:
-            prior_turn = past_turns[-1]["content"][:600]
-            fallback_chunks, fallback_in_bounds = await asyncio.to_thread(retriever.retrieve, prior_turn)
-            if fallback_in_bounds:
-                chunks = fallback_chunks
-                is_in_bounds = True
+        async def on_status(message: str):
+            await status_queue.put(message)
+
+        prep_task = asyncio.create_task(lesson.prepare_turn(
+            session_id, user_message, retrieval_query, retriever.retrieve, self.client, on_status
+        ))
+        while not prep_task.done():
+            try:
+                yield {"type": "status", "message": await asyncio.wait_for(status_queue.get(), timeout=0.1)}
+            except asyncio.TimeoutError:
+                pass
+        while not status_queue.empty():
+            yield {"type": "status", "message": status_queue.get_nowait()}
+        prep = prep_task.result()
+        chunks, is_in_bounds = prep.chunks, prep.in_bounds
 
         # 4. Out-of-Bounds Handling (REQ-AI-03)
         if not is_in_bounds:
@@ -197,85 +207,18 @@ class TutorEngine:
         ]
         yield {"type": "sources", "sources": sources}
 
-        # Retrieve session lesson tracking state
-        session_state = memory.get_session_state(session_id)
-        current_stage = session_state.get("lesson_stage", "HOOK")
-        current_topic = session_state.get("current_topic", "")
-
         # Format context from retrieved curriculum chunks
         context_text = "\n\n---\n".join([
             f"[Source: {c.get('filename')} (Section {c.get('chunk_index') + 1})]\n{c.get('content')}"
             for c in chunks
         ])
 
-        # Determine pedagogical stage from the student's turn number in this session.
-        # Stages cycle so long sessions keep teaching new sub-topics instead of
-        # being stuck in "synthesis" forever.
-        student_turn = memory.count_user_messages(session_id)
-        stage_guidance = ""
-        next_stage = current_stage
-
-        # Check if student is unsure or giving a blank response
-        lowered = user_message.lower()
-        is_struggling = any(p in lowered for p in [
-            "don't know", "dont know", "do not know", "not sure", "no idea", "confused",
-            "i'm lost", "im lost", "help me understand", "don't understand", "dont understand"
-        ])
-
-        # 1 = hook; then repeating 5-turn cycle: concept, concept, application, application, synthesis
-        cycle_position = 0 if student_turn <= 1 else (student_turn - 2) % 5
-        if is_struggling:
-            stage_guidance = (
-                "STUDENT NEEDS PROACTIVE TEACHING:\n"
-                "- Do NOT ask another quiz question.\n"
-                "- 70% of response must be direct explanation, clear intuition, and a vivid real-world example.\n"
-                "- Walk them step-by-step through how it works, then ask a gentle Guided Prediction or check."
-            )
-        elif student_turn <= 1:
-            next_stage = "HOOK"
-            stage_guidance = (
-                "LESSON STAGE 1: Hook & Roadmap (Start).\n"
-                "- Open with a compelling real-world scenario, intriguing dilemma, or vivid analogy.\n"
-                "- DO NOT ask a test question (e.g., do not ask what they already know).\n"
-                "- Briefly outline the 2–3 core ideas you will explore together.\n"
-                "- Conclude with a warm opening invitation or a Guided Prediction."
-            )
-        elif cycle_position in (0, 1):
-            next_stage = "CONCEPT"
-            stage_guidance = (
-                "LESSON STAGE 2: Explain & Anchor (Instruction Phase).\n"
-                "- 70% of response MUST be high-yield teaching: explain the core mechanism clearly in bite-sized chunks.\n"
-                "- Anchor with a concrete metaphor, case study, or walkthrough.\n"
-                "- Conclude with an Interactive Mechanic (Guided Prediction OR Fork in the Road choice OR Concept Translation).\n"
-                "- Strictly obey The 'One Question' Rule."
-            )
-        elif cycle_position in (2, 3):
-            next_stage = "REAL_WORLD_EXAMPLE"
-            stage_guidance = (
-                "LESSON STAGE 3 & 4: Practical Application (Hands-On Phase).\n"
-                "- Give the student ONE meaningful real-world challenge or scenario from the curriculum to solve.\n"
-                "- If responding to their previous answer, validate what they got right, clarify misconceptions with fresh instruction, and expand on their solution.\n"
-                "- No interrogation loops—deliver teaching value first."
-            )
-        else:
-            next_stage = "SYNTHESIS"
-            stage_guidance = (
-                "LESSON STAGE 5: Synthesis & Transition (Finish).\n"
-                "- Summarize the 2–3 key takeaways of the lesson clearly.\n"
-                "- Acknowledge the student's progress enthusiastically.\n"
-                "- Introduce the next logical topic or ask if they are ready to explore the next chapter."
-            )
-
-        # Update session tracking
-        memory.update_session_state(
-            session_id=session_id,
-            current_topic=current_topic or user_message[:50],
-            lesson_stage=next_stage
-        )
+        # Tell the UI where the lesson is (phase, step, plan) as soon as it is known.
+        yield {"type": "lesson", "lesson": lesson.public_state(session_id)}
 
         full_prompt = (
             f"{SOCRATIC_TUTOR_SYSTEM_PROMPT}\n\n"
-            f"[CURRENT LESSON LIFECYCLE GUIDANCE]\n{stage_guidance}\n[END LESSON GUIDANCE]\n\n"
+            f"[LESSON DIRECTIVE - follow this exactly for this turn]\n{prep.directive}\n[END LESSON DIRECTIVE]\n\n"
             f"[CURRICULUM CONTEXT START]\n{context_text}\n[CURRICULUM CONTEXT END]\n\n"
         )
         if past_turns:
@@ -286,7 +229,7 @@ class TutorEngine:
 
         full_prompt += (
             f"Student: {user_message}\n"
-            f"AI Tutor (teach first with 70% explanation, spoken cadence, max 1 question, no interrogation):"
+            f"AI Tutor (follow the lesson directive; spoken cadence; max 1 question):"
         )
 
         full_response_text = ""

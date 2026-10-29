@@ -87,6 +87,24 @@ class ConversationMemory:
             ).fetchone()
         return int(row["n"]) if row else 0
 
+    def count_assistant_messages(self, session_id: str) -> int:
+        """Total tutor turns saved in the session."""
+        with get_db() as db:
+            row = db.execute(
+                "SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND role = 'assistant'",
+                (session_id,)
+            ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def trailing_user_text(self, session_id: str) -> str:
+        """The student's words since the tutor last spoke (voice transcripts arrive in fragments)."""
+        parts: List[str] = []
+        for message in reversed(self.get_recent_messages(session_id)):
+            if message["role"] != "user":
+                break
+            parts.append(message["content"])
+        return " ".join(reversed(parts)).strip()
+
     def get_session_state(self, session_id: str) -> Dict[str, Any]:
         """Fetch current pedagogical tracking state for this learning session."""
         with get_db() as db:
@@ -142,7 +160,7 @@ class ConversationMemory:
         with get_db() as db:
             db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             db.execute(
-                "UPDATE sessions SET current_topic = NULL, lesson_stage = 'HOOK', understanding_score = 0, last_active = CURRENT_TIMESTAMP WHERE id = ?",
+                "UPDATE sessions SET current_topic = NULL, lesson_stage = 'INIT', understanding_score = 0, lesson_plan = NULL, lesson_beat = -1, lesson_holds = 0, lesson_marker = -1, last_active = CURRENT_TIMESTAMP WHERE id = ?",
                 (session_id,)
             )
             db.commit()

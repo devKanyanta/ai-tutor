@@ -25,6 +25,12 @@ export const api = {
     return res.json();
   },
 
+  resetLesson: async (sessionId: string): Promise<LessonState> => {
+    const res = await fetch(`${BASE_URL}/chat/session/${encodeURIComponent(sessionId)}/lesson/reset`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to reset lesson');
+    return res.json();
+  },
+
   clearSession: async (sessionId: string) => {
     const res = await fetch(`${BASE_URL}/chat/session/${sessionId}/clear`, { method: 'POST' });
     if (!res.ok) throw new Error('Failed to clear session');

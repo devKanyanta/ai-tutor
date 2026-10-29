@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
+import type { LessonState } from '../../types';
 
 export interface VoiceLessonEvent {
-  type: 'transcript' | 'assistant_text' | 'sources' | 'turn_complete';
+  type: 'transcript' | 'assistant_text' | 'sources' | 'turn_complete' | 'status' | 'lesson';
+  message?: string;
+  lesson?: LessonState;
   role?: 'user';
   content?: string;
   message_id?: string;
@@ -45,6 +48,12 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
   const [error, setError] = useState('');
   const levelsRef = useRef<VoiceLevels>({ mic: 0, tutor: 0 });
   const paceRef = useRef<number>(PACE_RATES.normal);
+  // Echo guard: while the tutor is audible the mic is muted toward the server unless the student is
+  // clearly louder than the tutor's own output (barge-in). Stops the tutor hearing itself.
+  const gateRef = useRef({ lastTutorAt: 0, loudFrames: 0, barge: false, pending: [] as string[] });
+  const discardAudioRef = useRef(false);
+  // Playback cushion (seconds). Grows after an underrun so a flaky connection stops causing skips.
+  const leadRef = useRef(0.25);
   // Stateful slow-down resampler: keeps its position/last sample between chunks so there are no seams.
   const resamplerRef = useRef({ pos: 0, prev: 0 });
   // Per-turn audio clock, used to reveal the tutor's text in step with what is actually being heard.
@@ -178,7 +187,10 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
     // rebuild ~150 ms of buffer so network/main-thread jitter doesn't leave audible gaps.
     const now = audioContext.currentTime;
     const queueDry = !(playbackTimeRef.current > now);
-    const startAt = queueDry ? now + 0.15 : playbackTimeRef.current;
+    if (turnAudioRef.current.scheduled > 0 && !turnAudioRef.current.ended && queueDry && playbackTimeRef.current > 0) {
+      leadRef.current = Math.min(0.7, leadRef.current + 0.1); // real underrun mid-turn: buffer more next time
+    }
+    const startAt = queueDry ? now + leadRef.current : playbackTimeRef.current;
     source.start(startAt);
 
     let turn = turnAudioRef.current;
@@ -217,7 +229,7 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
       audioContextRef.current = audioContext;
       await audioContext.resume();
 
-      const playbackContext = new AudioContext({ sampleRate: 24000, latencyHint: 'interactive' });
+      const playbackContext = new AudioContext({ sampleRate: 24000, latencyHint: 'playback' });
       const outputGain = playbackContext.createGain();
       outputGain.connect(playbackContext.destination);
       playbackContextRef.current = playbackContext;
@@ -229,7 +241,7 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true,
+          autoGainControl: false, // AGC boosts faint speaker echo into something the server mistakes for speech
         },
       });
       mediaStreamRef.current = stream;
@@ -267,32 +279,20 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
             readyResolverRef.current = null;
             socket?.close();
           } else if (packet.type === 'audio' && typeof packet.data === 'string') {
+            if (discardAudioRef.current) return; // student cut the tutor off; drop the rest of that turn
             try { playAudio(playbackContextRef.current!, packet.data); } catch (audioError) {
               console.error('Could not play tutor audio:', audioError);
             }
           } else if (packet.type === 'interrupted') {
-            resamplerRef.current = { pos: 0, prev: 0 };
+            discardAudioRef.current = false;
             turnAudioRef.current.frozen = getSpeechProgress();
             turnAudioRef.current.ended = true;
-            const playback = playbackContextRef.current;
-            const gain = outputGainRef.current;
-            const sources = Array.from(audioSourcesRef.current);
-            audioSourcesRef.current.clear();
-            levelsRef.current.tutor = 0;
-            if (playback && gain) {
-              // Quick fade-out so the cut doesn't pop, then restore the gain for the next turn.
-              gain.gain.cancelScheduledValues(playback.currentTime);
-              gain.gain.setTargetAtTime(0, playback.currentTime, 0.01);
-              window.setTimeout(() => {
-                sources.forEach((source) => { try { source.stop(); } catch { /* already finished */ } });
-                if (playbackContextRef.current === playback) gain.gain.setValueAtTime(1, playback.currentTime);
-              }, 60);
-              playbackTimeRef.current = 0;
-            }
+            cutPlayback();
           } else if (packet.type === 'transcript' || packet.type === 'assistant_text' ||
-                     packet.type === 'sources' || packet.type === 'turn_complete') {
+                     packet.type === 'sources' || packet.type === 'turn_complete' ||
+                     packet.type === 'status' || packet.type === 'lesson') {
             if (packet.type === 'assistant_text' && turnAudioRef.current.ended) turnAudioRef.current = newTurnAudio();
-            if (packet.type === 'turn_complete') turnAudioRef.current.ended = true;
+            if (packet.type === 'turn_complete') { turnAudioRef.current.ended = true; discardAudioRef.current = false; }
             onEventRef.current(packet as unknown as VoiceLessonEvent);
           }
         });
@@ -331,20 +331,56 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
         const input = event.inputBuffer.getChannelData(0);
         let sumSquares = 0;
         for (let i = 0; i < input.length; i += 1) sumSquares += input[i] * input[i];
-        levelsRef.current.mic = Math.min(1, Math.sqrt(sumSquares / input.length) * 7);
+        const micLevel = Math.min(1, Math.sqrt(sumSquares / input.length) * 7);
+
+        // Echo guard (see gateRef): only let the mic through while the tutor is audible if the student
+        // is clearly louder than the tutor's own output for a few frames in a row.
+        const gate = gateRef.current;
+        const playback = playbackContextRef.current;
+        const nowMs = performance.now();
+        const tutorPlaying = !!playback && playbackTimeRef.current > playback.currentTime;
+        if (tutorPlaying) gate.lastTutorAt = nowMs;
+        const echoWindow = tutorPlaying || nowMs - gate.lastTutorAt < 450;
+        let open = true;
+        if (echoWindow && !gate.barge) {
+          const louder = micLevel > Math.max(0.22, levelsRef.current.tutor * 1.4);
+          gate.loudFrames = louder ? gate.loudFrames + 1 : 0;
+          if (gate.loudFrames >= 3) gate.barge = true; else open = false;
+        } else if (!echoWindow) {
+          gate.barge = false;
+          gate.loudFrames = 0;
+        }
+        levelsRef.current.mic = open ? micLevel : 0;
+
+        // Downsample to 16 kHz by averaging (a simple low-pass; picking single samples aliases and hurts recognition).
         const ratio = audioContext!.sampleRate / 16000;
         const outputLength = Math.floor(input.length / ratio);
         const pcm = new ArrayBuffer(outputLength * 2);
         const view = new DataView(pcm);
         for (let i = 0; i < outputLength; i += 1) {
-          const sourceIndex = Math.min(Math.floor(i * ratio), input.length - 1);
-          const sample = Math.max(-1, Math.min(1, input[sourceIndex]));
+          const from = Math.floor(i * ratio);
+          const to = Math.max(from + 1, Math.min(input.length, Math.floor((i + 1) * ratio)));
+          let sum = 0;
+          for (let j = from; j < to; j += 1) sum += input[j];
+          const sample = Math.max(-1, Math.min(1, sum / (to - from)));
           view.setInt16(i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
         }
-        const bytes = new Uint8Array(pcm);
-        let binary = '';
-        for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
-        socket!.send(JSON.stringify({ type: 'audio', data: btoa(binary) }));
+        const encode = (bytes: Uint8Array) => {
+          let binary = '';
+          for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+          return btoa(binary);
+        };
+        const frame = encode(new Uint8Array(pcm));
+        if (!open) {
+          // Keep the last few frames so the start of a barge-in isn't clipped; send silence meanwhile.
+          gate.pending.push(frame);
+          if (gate.pending.length > 3) gate.pending.shift();
+          socket!.send(JSON.stringify({ type: 'audio', data: encode(new Uint8Array(outputLength * 2)) }));
+          return;
+        }
+        for (const queued of gate.pending) socket!.send(JSON.stringify({ type: 'audio', data: queued }));
+        gate.pending = [];
+        socket!.send(JSON.stringify({ type: 'audio', data: frame }));
       };
       microphone.connect(processor);
       processor.connect(mutedOutput);
@@ -386,6 +422,35 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
     return Math.min(1, (turn.playedBase + run) / turn.scheduled);
   }
 
+  /** Fade out and drop everything queued for playback (used for interruptions). */
+  function cutPlayback() {
+    resamplerRef.current = { pos: 0, prev: 0 };
+    const playback = playbackContextRef.current;
+    const gain = outputGainRef.current;
+    const sources = Array.from(audioSourcesRef.current);
+    audioSourcesRef.current.clear();
+    levelsRef.current.tutor = 0;
+    if (playback && gain) {
+      // Quick fade-out so the cut doesn't pop, then restore the gain for the next turn.
+      gain.gain.cancelScheduledValues(playback.currentTime);
+      gain.gain.setTargetAtTime(0, playback.currentTime, 0.01);
+      window.setTimeout(() => {
+        sources.forEach((source) => { try { source.stop(); } catch { /* already finished */ } });
+        if (playbackContextRef.current === playback) gain.gain.setValueAtTime(1, playback.currentTime);
+      }, 60);
+      playbackTimeRef.current = 0;
+    }
+  }
+
+  /** The student chose to interrupt: stop the tutor now and let the mic through. */
+  const interrupt = () => {
+    discardAudioRef.current = true;
+    gateRef.current.barge = true;
+    turnAudioRef.current.frozen = getSpeechProgress();
+    turnAudioRef.current.ended = true;
+    cutPlayback();
+  };
+
   const sendText = (content: string): boolean => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
@@ -395,5 +460,5 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
 
   const setPace = (pace: Pace) => { paceRef.current = PACE_RATES[pace]; };
 
-  return { status, error, start, stop, sendText, levelsRef, getSpeechProgress, setPace };
+  return { status, error, start, stop, sendText, levelsRef, getSpeechProgress, setPace, interrupt };
 }

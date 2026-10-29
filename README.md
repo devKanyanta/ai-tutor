@@ -8,6 +8,7 @@ Built to satisfy all specifications from the **User Requirements Document (URD)*
 
 ## 🚀 Features
 
+* **Planned, Self-Advancing Lessons:** For each topic the tutor first plans a short lesson from your materials (warm-up hook and roadmap, key points with check questions, practice tasks, recap), then moves through Warm-up → Learn → Practice → Recap automatically, one step per student turn. It holds and re-teaches if the student is stuck, answers side questions without losing its place, and works the same in text and voice. Students can see the plan and start a new topic at any time.
 * **Socratic Persona & Guiding Questions (`REQ-AI-02`, `USE-02`):** Rather than giving answers away, the tutor leads students to deeper understanding through probing questions, step-by-step hints, and positive reinforcement.
 * **Strict Curriculum Grounding (`REQ-AI-01`):** Ingested documents form the sole knowledge base. Responses cite the specific course materials referenced.
 * **Out-of-Bounds Handling (`REQ-AI-03`):** Automatically detects queries outside curriculum scope and redirects focus back to the course concepts.

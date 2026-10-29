@@ -65,6 +65,18 @@ def init_db():
     except Exception:
         pass
 
+    # Lesson flow state (see app/tutor/lesson.py)
+    for column in (
+        "lesson_plan TEXT",
+        "lesson_beat INTEGER DEFAULT -1",
+        "lesson_holds INTEGER DEFAULT 0",
+        "lesson_marker INTEGER DEFAULT -1",
+    ):
+        try:
+            cursor.execute(f"ALTER TABLE sessions ADD COLUMN {column}")
+        except Exception:
+            pass
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY,

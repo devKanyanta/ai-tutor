@@ -8,6 +8,7 @@ interface SlideDeckProps {
   turns: Message[];            // tutor turns only, oldest first
   streaming: boolean;          // the latest turn is still arriving
   thinking: boolean;           // waiting for the first words
+  thinkingLabel?: string;      // e.g. "Planning your lesson…"
   followLive: boolean;         // jump to the newest slide as it appears (voice)
   starters: { title: string; text: string }[];
   disabled: boolean;
@@ -26,7 +27,7 @@ const PROSE_SIZE = 'text-[1.4rem] sm:text-[1.9rem] leading-[1.4]';
 const LONG_SIZE = 'text-[1.1rem] sm:text-[1.4rem] leading-[1.5]';
 
 export const SlideDeck: React.FC<SlideDeckProps> = ({
-  turns, streaming, thinking, followLive, starters, disabled, onAsk, onFeedback,
+  turns, streaming, thinking, thinkingLabel, followLive, starters, disabled, onAsk, onFeedback,
 }) => {
   // Navigation resets automatically whenever a new tutor turn arrives.
   const [nav, setNav] = useState<{ turnCount: number; turn: number | null; slide: number | null; dir: 'next' | 'prev' }>(
@@ -106,6 +107,14 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
             <span className="uppercase tracking-[0.14em]">Lesson board</span>
           )}
         </div>
+        {thinking && turn && (
+          <span className="anim-fade-in flex items-center gap-2 text-mark-300" role="status">
+            <span className="dot-pulse flex gap-1" aria-hidden="true">
+              <span className="h-1.5 w-1.5 rounded-full bg-mark-300" /><span className="h-1.5 w-1.5 rounded-full bg-mark-300" /><span className="h-1.5 w-1.5 rounded-full bg-mark-300" />
+            </span>
+            {thinkingLabel ?? 'Preparing the next idea'}
+          </span>
+        )}
         {slides.length > 0 && <span className="tabular-nums">Slide {slideIdx + 1} / {slides.length}{isLive ? ' · live' : ''}</span>}
       </div>
 
@@ -142,7 +151,7 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
             <span className="dot-pulse flex gap-1.5" aria-hidden="true">
               <span className="h-2 w-2 rounded-full bg-mark-300" /><span className="h-2 w-2 rounded-full bg-mark-300" /><span className="h-2 w-2 rounded-full bg-mark-300" />
             </span>
-            Preparing the next idea
+            {thinkingLabel ?? 'Preparing the next idea'}
           </div>
         )}
 

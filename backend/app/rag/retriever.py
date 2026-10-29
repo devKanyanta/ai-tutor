@@ -12,7 +12,7 @@ class DocumentRetriever:
         self.top_k = top_k
         self.threshold = threshold
 
-    def retrieve(self, query: str) -> Tuple[List[Dict[str, Any]], bool]:
+    def retrieve(self, query: str, top_k: int | None = None) -> Tuple[List[Dict[str, Any]], bool]:
         """
         Retrieve relevant curriculum chunks.
         Returns:
@@ -23,7 +23,7 @@ class DocumentRetriever:
             return [], False
 
         query_vec = embedding_client.embed_query(query)
-        results = vector_store.search(query_vec, top_k=self.top_k)
+        results = vector_store.search(query_vec, top_k=top_k or self.top_k)
 
         if not results:
             return [], False

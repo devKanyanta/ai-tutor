@@ -48,8 +48,22 @@ export interface Metrics {
   positive_ratio: number;
 }
 
+export interface LessonPhase {
+  id: 'WARMUP' | 'LEARN' | 'PRACTICE' | 'RECAP';
+  label: string;
+  status: 'done' | 'current' | 'upcoming';
+  step: number;   // 1-based step inside this phase (0 when not started)
+  steps: number;  // number of tutor steps in this phase
+  items: string[];
+}
+
 export interface LessonState {
-  lesson_stage: string;
+  lesson_stage: string;   // INIT | WARMUP | LEARN | PRACTICE | RECAP | DONE
   current_topic: string;
   student_turns: number;
+  complete?: boolean;
+  objective?: string;
+  phases?: LessonPhase[];
+  beat?: number;
+  total_beats?: number;
 }
