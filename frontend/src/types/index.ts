@@ -66,4 +66,6 @@ export interface LessonState {
   phases?: LessonPhase[];
   beat?: number;
   total_beats?: number;
+  /** Label of the phase the tutor is waiting for a go-ahead to start (e.g. "Practice"), or empty. */
+  awaiting_confirmation?: string;
 }

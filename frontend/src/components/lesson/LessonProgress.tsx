@@ -46,6 +46,12 @@ export const LessonProgress: React.FC<Props> = ({ lesson, busy, onNewTopic }) =>
         ))}
       </ol>
 
+      {lesson.awaiting_confirmation && (
+        <span className="anim-fade-in shrink-0 whitespace-nowrap rounded bg-mark-300 px-2 py-1 text-xs font-semibold text-board-950">
+          Ready for {lesson.awaiting_confirmation}?
+        </span>
+      )}
+
       <button
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}

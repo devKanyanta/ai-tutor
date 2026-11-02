@@ -71,6 +71,7 @@ def init_db():
         "lesson_beat INTEGER DEFAULT -1",
         "lesson_holds INTEGER DEFAULT 0",
         "lesson_marker INTEGER DEFAULT -1",
+        "lesson_gate INTEGER DEFAULT 0",
     ):
         try:
             cursor.execute(f"ALTER TABLE sessions ADD COLUMN {column}")

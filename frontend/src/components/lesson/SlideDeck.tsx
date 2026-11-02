@@ -12,6 +12,7 @@ interface SlideDeckProps {
   followLive: boolean;         // jump to the newest slide as it appears (voice)
   starters: { title: string; text: string }[];
   disabled: boolean;
+  checkpoint?: string;         // phase the tutor is asking permission to start, e.g. "Practice"
   onAsk: (text: string) => void;
   onFeedback: (messageId: string, rating: 1 | -1) => void;
 }
@@ -27,7 +28,7 @@ const PROSE_SIZE = 'text-[1.4rem] sm:text-[1.9rem] leading-[1.4]';
 const LONG_SIZE = 'text-[1.1rem] sm:text-[1.4rem] leading-[1.5]';
 
 export const SlideDeck: React.FC<SlideDeckProps> = ({
-  turns, streaming, thinking, thinkingLabel, followLive, starters, disabled, onAsk, onFeedback,
+  turns, streaming, thinking, thinkingLabel, followLive, starters, disabled, checkpoint, onAsk, onFeedback,
 }) => {
   // Navigation resets automatically whenever a new tutor turn arrives.
   const [nav, setNav] = useState<{ turnCount: number; turn: number | null; slide: number | null; dir: 'next' | 'prev' }>(
@@ -218,7 +219,17 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
                   <span className="truncate">Source: {sourceNames[0]}{sourceNames.length > 1 ? ` +${sourceNames.length - 1}` : ''}</span>
                 </button>
               )}
-              {!isLive && turnIdx === latest && QUICK.map(([label, text]) => (
+              {!isLive && turnIdx === latest && checkpoint && (
+                <>
+                  <button disabled={disabled} onClick={() => onAsk("Yes, I'm ready to move on")} className="rounded bg-mark-300 px-2.5 py-1 font-semibold text-board-950 transition-colors hover:bg-mark-400 disabled:opacity-40">
+                    Yes, move on to {checkpoint}
+                  </button>
+                  <button disabled={disabled} onClick={() => onAsk('Not yet, I would like to go over this some more')} className="rounded border border-white/20 px-2 py-1 text-[#d8d2c2] transition-colors hover:bg-white/10 disabled:opacity-40">
+                    Not yet
+                  </button>
+                </>
+              )}
+              {!isLive && turnIdx === latest && !checkpoint && QUICK.map(([label, text]) => (
                 <button key={label} disabled={disabled} onClick={() => onAsk(text)} className="rounded border border-white/20 px-2 py-1 text-[#d8d2c2] transition-colors hover:bg-white/10 disabled:opacity-40">
                   {label}
                 </button>

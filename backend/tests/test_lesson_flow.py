@@ -22,89 +22,162 @@ def run(session_id, message, retrieve=fake_retrieve):
     return asyncio.run(lesson.prepare_turn(session_id, message, message, retrieve, None))
 
 
-def tutor_replies(session_id, n=1):
-    for _ in range(n):  # a saved tutor reply is what makes the next student turn count as new
-        memory.add_message(session_id, "assistant", "ok")
+def tutor_reply(session_id):
+    memory.add_message(session_id, "assistant", "ok")  # a saved tutor reply makes the next student turn count
+
+
+def say(session_id, message):
+    """One full exchange: the student speaks, the lesson reacts, the tutor replies."""
+    prep = run(session_id, message)
+    tutor_reply(session_id)
+    return prep
+
+
+def new_lesson():
+    sid = memory.get_or_create_session()
+    say(sid, "Teach me about photosynthesis")
+    return sid
+
+
+def go_to_checkpoint(sid, stage):
+    """Drive the lesson (confirming every checkpoint) until the checkpoint at the end of `stage` is open."""
+    for _ in range(40):
+        state = lesson.load_state(sid)
+        if state.gate and state.stage == stage:
+            return
+        say(sid, "yes, let's move on" if lesson.awaiting_confirmation(state) else "I think it is about sunlight and plants")
+    raise AssertionError(f"never reached the {stage} checkpoint")
 
 
 def test_classify_turn():
-    empty = lesson.LessonState()
-    assert lesson.classify_turn(empty, "Teach me about photosynthesis") == "new_lesson"
+    assert lesson.classify_turn(lesson.LessonState(), "Teach me about photosynthesis") == "new_lesson"
     plan = lesson.fallback_plan("photosynthesis", CHUNKS)
-    active = lesson.LessonState(plan=plan, beat=1)
-    assert lesson.classify_turn(active, "I think it makes sugar") == "continue"
-    assert lesson.classify_turn(active, "ok") == "continue"
-    assert lesson.classify_turn(active, "Why is chlorophyll green exactly?") == "side_question"
-    assert lesson.classify_turn(active, "let's talk about something else") == "new_lesson"
-    done = lesson.LessonState(plan=plan, beat=len(plan_beats(plan)))
+    learning = lesson.LessonState(plan=plan, beat=1)
+    assert lesson.classify_turn(learning, "I think it makes sugar") == "continue"
+    assert lesson.classify_turn(learning, "ok") == "continue"
+    assert lesson.classify_turn(learning, "Why is chlorophyll green exactly?") == "side_question"
+    # Voice transcripts often have no question mark.
+    assert lesson.classify_turn(learning, "what does chlorophyll actually absorb") == "side_question"
+    assert lesson.classify_turn(learning, "let's talk about something else") == "new_lesson"
+    done = lesson.LessonState(plan=plan, beat=len(lesson.build_beats(plan)))
     assert lesson.classify_turn(done, "thanks") == "closing"
     assert lesson.classify_turn(done, "now explain the Calvin cycle in detail") == "new_lesson"
 
 
-def plan_beats(plan):
-    return lesson.build_beats(plan)
+def test_ready_confirmation_is_strict():
+    for yes in ("yes", "yeah I'm ready", "ok let's go", "sure, move on", "yes please continue"):
+        assert lesson.is_ready_confirmation(yes), yes
+    for no in ("not yet", "no wait", "I have a question first", "can you explain that again", "hmm", "I think it is sunlight"):
+        assert not lesson.is_ready_confirmation(no), no
 
 
-def test_full_lesson_advances_automatically_through_every_phase():
-    sid = memory.get_or_create_session()
-    first = run(sid, "Teach me about photosynthesis")
-    assert first.new_plan and "WARM-UP" in first.directive
-    state = lesson.load_state(sid)
-    total = len(state.beats)
-    seen = [state.stage]
-
-    for _ in range(total):  # one student reply per remaining step, plus the closing turn
-        tutor_replies(sid)
-        run(sid, "I think it is about sunlight and plants")
+def test_every_phase_change_needs_a_yes_and_the_lesson_completes():
+    sid = new_lesson()
+    seen = [lesson.load_state(sid).stage]
+    for _ in range(40):
+        state = lesson.load_state(sid)
+        if state.done:
+            break
+        say(sid, "yes, let's move on" if lesson.awaiting_confirmation(state) else "I think it is about sunlight and plants")
         seen.append(lesson.load_state(sid).stage)
-
-    assert seen[0] == "WARMUP"
-    assert seen.index("LEARN") < seen.index("PRACTICE") < seen.index("RECAP") < seen.index("DONE")
+    order = [s for i, s in enumerate(seen) if i == 0 or s != seen[i - 1]]
+    assert order == ["WARMUP", "LEARN", "PRACTICE", "RECAP", "DONE"]
     assert lesson.public_state(sid)["complete"] is True
 
 
-def test_struggling_student_holds_then_moves_on():
-    sid = memory.get_or_create_session()
-    run(sid, "Teach me about photosynthesis")
-    tutor_replies(sid)
-    run(sid, "sounds interesting")                      # warm-up -> learn 1
-    assert lesson.load_state(sid).beat == 1
-    for expected_holds in (1, 2):
-        tutor_replies(sid)
-        prep = run(sid, "I'm confused, I don't understand")
-        assert lesson.load_state(sid).beat == 1          # held on the same step
-        assert lesson.load_state(sid).holds == expected_holds
-        assert "NEEDS HELP" in prep.directive
-    tutor_replies(sid)
-    run(sid, "I'm still confused")                       # holds exhausted: move on rather than loop forever
-    assert lesson.load_state(sid).beat == 2
+def test_warmup_waits_for_the_student_to_be_ready():
+    sid = new_lesson()
+    prep = say(sid, "sounds interesting to me")   # a comment is not a yes
+    assert lesson.load_state(sid).stage == "WARMUP" and "PHASE CHECKPOINT" in prep.directive
+    assert lesson.public_state(sid)["awaiting_confirmation"] == "Learn"
+    say(sid, "yes ready")
+    assert lesson.load_state(sid).stage == "LEARN"
 
 
-def test_side_question_does_not_advance_and_duplicate_turn_is_ignored():
-    sid = memory.get_or_create_session()
-    run(sid, "Teach me about photosynthesis")
-    tutor_replies(sid)
-    prep = run(sid, "Why is chlorophyll green exactly?")
-    assert prep.mode == "side_question" and "SIDE QUESTION" in prep.directive
-    assert lesson.load_state(sid).beat == 0
+def test_a_question_never_moves_the_lesson_to_the_next_phase():
+    sid = new_lesson()
+    go_to_checkpoint(sid, "LEARN")                 # last learn point answered, checkpoint asks about Practice
+    state = lesson.load_state(sid)
+    beat = state.beat
+    assert lesson.public_state(sid)["awaiting_confirmation"] == "Practice"
 
-    run(sid, "I guess because it reflects green light")  # advances to learn 1
+    prep = say(sid, "Why is chlorophyll green exactly?")      # a question at the checkpoint
+    assert prep.mode == "side_question"
+    assert lesson.load_state(sid).stage == "LEARN" and lesson.load_state(sid).beat == beat
+
+    prep = say(sid, "not yet, I want to go over that again")  # not ready
+    assert lesson.load_state(sid).stage == "LEARN" and "PHASE CHECKPOINT" in prep.directive
+
+    say(sid, "ok yes let's go on")                            # clear yes
+    assert lesson.load_state(sid).stage == "PRACTICE"
+
+
+def test_question_in_the_middle_of_learn_keeps_the_step():
+    sid = new_lesson()
+    say(sid, "yes ready")
     beat = lesson.load_state(sid).beat
-    run(sid, "I guess because it reflects green light")  # same turn repeated (duplicate tool call)
+    prep = say(sid, "what does chlorophyll actually absorb")
+    assert prep.mode == "side_question" and "SIDE QUESTION" in prep.directive
+    assert lesson.load_state(sid).beat == beat
+
+
+def test_struggling_student_holds_then_moves_on():
+    sid = new_lesson()
+    say(sid, "yes ready")                                     # warm-up -> learn 1
+    beat = lesson.load_state(sid).beat
+    for expected_holds in (1, 2):
+        prep = say(sid, "I'm confused, I don't understand")
+        assert lesson.load_state(sid).beat == beat and lesson.load_state(sid).holds == expected_holds
+        assert "NEEDS HELP" in prep.directive
+    say(sid, "I'm still confused")                            # holds exhausted: move on rather than loop forever
+    assert lesson.load_state(sid).beat > beat or lesson.load_state(sid).gate
+
+
+def test_duplicate_turn_is_ignored():
+    sid = new_lesson()
+    run(sid, "yes ready")                                     # tutor has not replied yet
+    beat = lesson.load_state(sid).beat
+    run(sid, "yes ready")                                     # same turn repeated (duplicate tool call)
     assert lesson.load_state(sid).beat == beat == 1
 
 
 def test_acknowledgement_is_not_critiqued_and_new_topic_resets_plan():
-    sid = memory.get_or_create_session()
-    run(sid, "Teach me about photosynthesis")
-    tutor_replies(sid)
-    run(sid, "sure")
-    tutor_replies(sid)
-    prep = run(sid, "ok")
+    sid = new_lesson()
+    say(sid, "sure")
+    prep = say(sid, "ok")
     assert "only acknowledged" in prep.directive
     lesson.reset_lesson(sid)
     assert lesson.load_state(sid).plan is None
     assert lesson.public_state(sid)["phases"] == []
+
+
+def test_practice_needs_a_real_attempt_before_the_checkpoint():
+    sid = new_lesson()
+    go_to_checkpoint(sid, "LEARN")
+    say(sid, "yes")                                           # confirm -> Practice task 1
+    state = lesson.load_state(sid)
+    assert state.stage == "PRACTICE"
+    beat = state.beat
+
+    prep = say(sid, "ok")                                     # no attempt: hold, encourage a go
+    assert lesson.load_state(sid).beat == beat and "NOT ATTEMPTED" in prep.directive
+
+    say(sid, "Plants take in carbon dioxide and make sugar using light")  # a real attempt moves on
+    after = lesson.load_state(sid)
+    assert after.beat == beat + 1 or after.gate
+
+
+def test_voice_commit_follows_the_same_checkpoint_rules():
+    sid = new_lesson()
+    go_to_checkpoint(sid, "LEARN")
+    tutor_reply(sid)
+    lesson.commit_turn(sid, "why is chlorophyll green exactly")   # a question: no change
+    assert lesson.load_state(sid).stage == "LEARN"
+    lesson.commit_turn(sid, "not yet")                            # not ready: stays at the checkpoint
+    assert lesson.load_state(sid).stage == "LEARN" and lesson.load_state(sid).gate
+    tutor_reply(sid)
+    lesson.commit_turn(sid, "yes")                                # clear yes: now it crosses
+    assert lesson.load_state(sid).stage == "PRACTICE"
 
 
 def test_lesson_state_endpoint_and_reset():

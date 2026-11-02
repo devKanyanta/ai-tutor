@@ -160,7 +160,7 @@ class ConversationMemory:
         with get_db() as db:
             db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             db.execute(
-                "UPDATE sessions SET current_topic = NULL, lesson_stage = 'INIT', understanding_score = 0, lesson_plan = NULL, lesson_beat = -1, lesson_holds = 0, lesson_marker = -1, last_active = CURRENT_TIMESTAMP WHERE id = ?",
+                "UPDATE sessions SET current_topic = NULL, lesson_stage = 'INIT', understanding_score = 0, lesson_plan = NULL, lesson_beat = -1, lesson_holds = 0, lesson_marker = -1, lesson_gate = 0, last_active = CURRENT_TIMESTAMP WHERE id = ?",
                 (session_id,)
             )
             db.commit()

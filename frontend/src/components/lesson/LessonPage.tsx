@@ -375,6 +375,7 @@ export const LessonPage: React.FC = () => {
               thinkingLabel={statusMessage || undefined}
               followLive={isVoiceActive}
               starters={STARTERS}
+              checkpoint={lesson.awaiting_confirmation || undefined}
               disabled={!sessionId || (isVoiceActive && voice.status !== 'listening')}
               onAsk={(t) => void ask(t)}
               onFeedback={handleFeedback}
