@@ -3,10 +3,13 @@ import { ArrowRight, BookOpen, GraduationCap, WifiOff } from 'lucide-react';
 import { Logo } from '../Logo';
 import { Link } from '../../router';
 import { api } from '../../services/api';
+import { UserMenu } from '../auth/UserMenu';
+import { useAuth } from '../auth/AuthContext';
 import type { Tutor } from '../../types';
 
 /** The student's first step: choose which specialised tutor to learn with. */
 export const TutorPicker: React.FC = () => {
+  const { user } = useAuth();
   const [tutors, setTutors] = useState<Tutor[] | null>(null);
   const [error, setError] = useState(false);
 
@@ -21,14 +24,17 @@ export const TutorPicker: React.FC = () => {
       <header className="border-b border-ink-200 bg-surface">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-8">
           <Logo />
-          <Link to="/studio" className="px-2 py-2 text-xs font-medium text-ink-600 hover:text-ink-900">Instructors</Link>
+          <div className="flex items-center gap-2">
+            <UserMenu />
+            <Link to="/studio" className="px-2 py-2 text-xs font-medium text-ink-600 hover:text-ink-900">Instructors</Link>
+          </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-10 sm:px-8 sm:py-14">
-        <h1 className="text-3xl text-ink-900 sm:text-4xl">Who would you like to learn with?</h1>
+        <h1 className="text-3xl text-ink-900 sm:text-4xl">{user ? `Welcome, ${user.name.split(' ')[0]}.` : 'Welcome.'} Who would you like to learn with?</h1>
         <p className="mt-2 max-w-2xl text-ink-600">
-          Each tutor is built by an instructor around one course or subject and teaches only from that course’s materials.
+          Each tutor is built by an instructor around one course and teaches only from that course’s materials. Pick one and your lesson starts right where you left off.
         </p>
 
         {error && (
@@ -56,7 +62,10 @@ export const TutorPicker: React.FC = () => {
         {tutors && tutors.length > 0 && (
           <ul className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {tutors.map((tutor, i) => {
-              const ready = tutor.ready_documents > 0;
+              const ready = tutor.ready_documents > 0 && tutor.lesson_count > 0;
+              const finished = tutor.lesson_count > 0 && tutor.completed_lessons >= tutor.lesson_count;
+              const started = tutor.completed_lessons > 0;
+              const percent = tutor.lesson_count ? Math.round((tutor.completed_lessons / tutor.lesson_count) * 100) : 0;
               const body = (
                 <>
                   <span className="flex h-11 w-11 items-center justify-center rounded-md bg-board-800 font-serif text-lg font-bold text-[#f6f2e9]">
@@ -65,12 +74,19 @@ export const TutorPicker: React.FC = () => {
                   <h2 className="mt-4 font-serif text-xl font-semibold text-ink-900">{tutor.name}</h2>
                   {tutor.subject && <p className="mt-0.5 text-sm font-medium text-board-600">{tutor.subject}</p>}
                   {tutor.description && <p className="mt-2 line-clamp-3 text-sm text-ink-600">{tutor.description}</p>}
-                  <p className="mt-auto flex items-center justify-between gap-2 pt-5 text-xs font-medium text-ink-500">
-                    <span className="flex items-center gap-1.5"><BookOpen className="h-3.5 w-3.5" />
-                      {ready ? `${tutor.ready_documents} ${tutor.ready_documents === 1 ? 'document' : 'documents'}` : 'Materials coming soon'}
-                    </span>
-                    {ready && <span className="flex items-center gap-1 text-board-700">Start <ArrowRight className="h-3.5 w-3.5" /></span>}
-                  </p>
+                  <div className="mt-auto pt-5">
+                    {ready && (
+                      <div className="mb-2 h-1.5 overflow-hidden rounded-full bg-ink-100" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100} aria-label="Course progress">
+                        <div className="h-full rounded-full bg-board-600" style={{ width: `${percent}%` }} />
+                      </div>
+                    )}
+                    <p className="flex items-center justify-between gap-2 text-xs font-medium text-ink-500">
+                      <span className="flex items-center gap-1.5"><BookOpen className="h-3.5 w-3.5" />
+                        {ready ? `${tutor.completed_lessons} of ${tutor.lesson_count} lessons done` : 'Materials coming soon'}
+                      </span>
+                      {ready && <span className="flex items-center gap-1 text-board-700">{finished ? 'Review' : started ? 'Continue' : 'Start'} <ArrowRight className="h-3.5 w-3.5" /></span>}
+                    </p>
+                  </div>
                 </>
               );
               const cls = 'card anim-fade-up flex h-full flex-col p-5 text-left';

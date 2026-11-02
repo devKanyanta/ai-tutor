@@ -25,6 +25,9 @@ export interface Tutor {
   description: string;
   document_count: number;
   ready_documents: number;
+  /** Lessons in the course and how many of them this student has finished. */
+  lesson_count: number;
+  completed_lessons: number;
   created_at: string;
 }
 
@@ -81,7 +84,30 @@ export interface LessonPhase {
   items: string[];
 }
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+}
+
+export interface CourseLesson {
+  id: string;
+  position: number;
+  title: string;
+  status?: 'not_started' | 'in_progress' | 'completed';
+}
+
+export interface CourseState {
+  total: number;
+  completed: number;
+  current_id: string | null;
+  current_position: number | null;
+  lessons: CourseLesson[];
+}
+
 export interface LessonState {
+  /** The student's position in the tutor's course; null when the tutor has no lessons. */
+  course?: CourseState | null;
   lesson_stage: string;   // INIT | WARMUP | LEARN | PRACTICE | RECAP | DONE
   current_topic: string;
   student_turns: number;

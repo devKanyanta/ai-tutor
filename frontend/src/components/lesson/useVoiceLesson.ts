@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { getUserToken } from '../../services/api';
 import type { LessonState } from '../../types';
 
 export interface VoiceLessonEvent {
@@ -248,7 +249,7 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       socket = new WebSocket(
-        `${protocol}//${window.location.host}/api/chat/voice/${encodeURIComponent(sessionId)}`
+        `${protocol}//${window.location.host}/api/chat/voice/${encodeURIComponent(sessionId)}?token=${encodeURIComponent(getUserToken())}`
       );
       socketRef.current = socket;
 

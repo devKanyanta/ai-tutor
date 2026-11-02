@@ -8,7 +8,10 @@ import { DocumentManager } from './components/admin/DocumentManager';
 import { MetricsOverview } from './components/admin/MetricsOverview';
 import { AdminModal } from './components/admin/AdminModal';
 import { TutorForm, TutorList } from './components/admin/TutorManager';
+import { CourseOutlineEditor } from './components/admin/CourseOutlineEditor';
 import { TutorPicker } from './components/tutors/TutorPicker';
+import { AuthPage } from './components/auth/AuthPage';
+import { useAuth } from './components/auth/AuthContext';
 import type { DocumentItem, Metrics, TutorAdmin } from './types';
 import { api, UNAUTHORIZED } from './services/api';
 
@@ -159,6 +162,7 @@ const Studio: React.FC = () => {
                   </div>
                 </div>
                 <MetricsOverview metrics={metrics} loading={loading && !metrics} />
+                <CourseOutlineEditor token={token} tutorId={selected.id} refreshKey={documents.map((d) => `${d.id}:${d.status}:${d.chunk_count}`).join('|')} onUnauthorized={unauthorized} />
                 <DocumentManager token={token} tutorId={selected.id} documents={documents} loading={loading && documents.length === 0} onRefresh={refresh} />
               </>
             )}
@@ -181,13 +185,21 @@ const Studio: React.FC = () => {
   );
 };
 
+/** Everything a student sees after /learn needs an account. */
+const Learn: React.FC = () => {
+  const { user } = useAuth();
+  const tutorId = useQueryParam('tutor');
+  if (user === undefined) return <div className="skeleton h-dvh" aria-hidden="true" />;
+  if (user === null) return <AuthPage />;
+  return tutorId ? <LessonPage key={`${user.id}:${tutorId}`} tutorId={tutorId} /> : <TutorPicker />;
+};
+
 export function App() {
   const route = useRoute();
-  const tutorId = useQueryParam('tutor');
   return (
     <div key={route} className="anim-fade-in">
       {route === '/' && <Landing />}
-      {route === '/learn' && (tutorId ? <LessonPage key={tutorId} tutorId={tutorId} /> : <TutorPicker />)}
+      {route === '/learn' && <Learn />}
       {route === '/studio' && <Studio />}
     </div>
   );

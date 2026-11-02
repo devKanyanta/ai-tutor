@@ -6,27 +6,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 from app.main import app
 from app.core.config import settings
-
-def make_tutor(client, name, **extra):
-    res = client.post(
-        "/api/admin/tutors",
-        headers={"Authorization": f"Bearer {settings.ADMIN_TOKEN}"},
-        json={"name": name, "subject": name, **extra},
-    )
-    assert res.status_code == 201, res.text
-    return res.json()["id"]
-
-
-def upload_text(client, tutor_id, filename, text):
-    res = client.post(
-        "/api/admin/documents/upload",
-        headers={"Authorization": f"Bearer {settings.ADMIN_TOKEN}"},
-        data={"tutor_id": tutor_id},
-        files={"file": (filename, io.BytesIO(text.encode()), "text/plain")},
-    )
-    assert res.status_code == 200, res.text
-    return res.json()
-
+from helpers import make_tutor, upload_text, sign_up
 
 def test_health_check():
     """Verify health check endpoint returns 200 and schema."""
@@ -41,12 +21,16 @@ def test_voice_lesson_requires_gemini_configuration(monkeypatch):
     """Keep the voice endpoint usable only when the server-side Gemini key is configured."""
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
     with TestClient(app) as client:
-        with client.websocket_connect("/api/chat/voice/test-session") as websocket:
+        token, _ = sign_up(client)
+        tutor_id = make_tutor(client, "Voice Tutor")
+        sid = client.post("/api/chat/session/new", json={"tutor_id": tutor_id}).json()["session_id"]
+        with client.websocket_connect(f"/api/chat/voice/{sid}?token={token}") as websocket:
             message = websocket.receive_json()
             assert message["type"] == "error"
             assert "not configured" in message["message"].lower()
             with pytest.raises(WebSocketDisconnect):
                 websocket.receive_json()
+        client.delete(f"/api/admin/tutors/{tutor_id}", headers={"Authorization": f"Bearer {settings.ADMIN_TOKEN}"})
 
 
 def test_admin_auth():
@@ -70,6 +54,7 @@ def test_document_lifecycle_rag_and_kpis():
         token = settings.ADMIN_TOKEN
         headers = {"Authorization": f"Bearer {token}"}
         tutor_id = make_tutor(client, "Calculus Tutor")
+        sign_up(client)
 
         # 1. Upload curriculum file (REQ-IN-01..04)
         sample_content = (
@@ -219,6 +204,7 @@ def test_upload_filename_cannot_escape_upload_dir():
 
 def test_chat_rejects_invalid_payloads():
     with TestClient(app) as client:
+        sign_up(client)
         assert client.post("/api/chat/stream", json={"session_id": "s", "message": ""}).status_code == 422
         assert client.post("/api/chat/feedback", json={"session_id": "s", "message_id": "m", "rating": 5}).status_code == 422
 
@@ -228,6 +214,7 @@ def test_tutors_keep_their_curricula_separate():
     from app.rag.retriever import retriever
     with TestClient(app) as client:
         headers = {"Authorization": f"Bearer {settings.ADMIN_TOKEN}"}
+        sign_up(client)
         history = make_tutor(client, "History Tutor", instructions="Teach through stories.")
         chem = make_tutor(client, "Chemistry Tutor")
         try:
@@ -265,6 +252,7 @@ def test_deleting_a_tutor_removes_its_material():
     from app.rag.vector_store import vector_store
     with TestClient(app) as client:
         headers = {"Authorization": f"Bearer {settings.ADMIN_TOKEN}"}
+        sign_up(client)
         tid = make_tutor(client, "Temp Tutor")
         upload_text(client, tid, "t.txt", "Temporary material about tectonic plates.")
         assert vector_store.count(tid) > 0

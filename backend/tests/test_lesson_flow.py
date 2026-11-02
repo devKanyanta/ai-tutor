@@ -185,6 +185,8 @@ def test_lesson_state_endpoint_and_reset():
     from app.main import app
     from app.core.config import settings
     with TestClient(app) as client:
+        from helpers import sign_up
+        sign_up(client)
         tid = client.post(
             "/api/admin/tutors",
             headers={"Authorization": f"Bearer {settings.ADMIN_TOKEN}"},

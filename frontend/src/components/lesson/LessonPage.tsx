@@ -6,15 +6,13 @@ import { LessonProgress } from './LessonProgress';
 import { SlideDeck } from './SlideDeck';
 import { VoiceOrb } from './VoiceOrb';
 import { useVoiceLesson, type VoiceLessonEvent, type Pace } from './useVoiceLesson';
-import { api } from '../../services/api';
+import { api, studentFetch } from '../../services/api';
+import { CourseProgress } from './CourseProgress';
+import { UserMenu } from '../auth/UserMenu';
 import type { LessonState, Message, Tutor } from '../../types';
 
-const STARTERS = [
-  { title: 'Map the course', text: 'What topics do my course materials cover?' },
-  { title: 'Start from the basics', text: 'Explain the key idea of the first chapter simply' },
-  { title: 'Quick summary', text: 'Give me a short summary of the main concepts' },
-  { title: 'I am stuck', text: 'Help me understand something I find confusing' },
-];
+/** The tutor opens the lesson itself, so there are no topic suggestions to offer. */
+const NO_STARTERS: { title: string; text: string }[] = [];
 
 /**
  * One board "explanation" = everything the tutor said between two student turns.
@@ -60,7 +58,6 @@ const mergeConsecutive = (list: Message[]): Message[] => {
 };
 
 export const LessonPage: React.FC<{ tutorId: string }> = ({ tutorId }) => {
-  const sessionKey = `ai_tutor_session_id:${tutorId}`;
   const [tutor, setTutor] = useState<Tutor | null>(null);
   const [tutorMissing, setTutorMissing] = useState(false);
   const [sessionId, setSessionId] = useState('');
@@ -86,6 +83,67 @@ export const LessonPage: React.FC<{ tutorId: string }> = ({ tutorId }) => {
     try { setLesson(await api.getSessionState(id)); } catch { /* progress is optional */ }
   }, []);
 
+  /** Stream one tutor reply from an SSE endpoint into the assistant message `assistantId`. */
+  const streamReply = useCallback(async (path: string, body: unknown, assistantId: string) => {
+    const patch = (fn: (m: Message) => Message) => setMessages((prev) => prev.map((m) => (m.id === assistantId ? fn(m) : m)));
+    try {
+      const response = await studentFetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok || !response.body) throw new Error('Stream request failed');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulated = '';
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (!payload) continue;
+          try {
+            const event = JSON.parse(payload);
+            if (event.type === 'status') setStatusMessage(event.message || '');
+            else if (event.type === 'lesson') setLesson(event.lesson);
+            else if (event.type === 'sources') patch((m) => ({ ...m, sources: event.sources }));
+            else if (event.type === 'token') { setStatusMessage(''); accumulated += event.content; patch((m) => ({ ...m, content: accumulated })); }
+            else if (event.type === 'error') patch((m) => ({ ...m, content: accumulated || 'Sorry, something went wrong while answering. Please try again.' }));
+            else if (event.type === 'done') patch((m) => ({ ...m, id: event.message_id || m.id }));
+          } catch (err) {
+            console.error('SSE parse error:', err);
+          }
+        }
+      }
+      if (!accumulated) setMessages((prev) => prev.filter((m) => m.id !== assistantId || m.content));
+    } catch (err) {
+      console.error('Chat error:', err);
+      patch((m) => ({ ...m, content: 'We could not reach your tutor. Please check your connection and try again.' }));
+    }
+  }, []);
+
+  /** The tutor speaks first: it starts (or resumes) the student's next lesson without asking for a topic. */
+  const openLesson = useCallback(async (id: string) => {
+    const assistantId = `a-open-${Date.now()}`;
+    lastVoiceRole.current = null;
+    setMessages([{ id: assistantId, role: 'assistant', content: '', sources: [], created_at: new Date().toISOString() }]);
+    setIsLoading(true);
+    try {
+      await streamReply('/chat/open', { session_id: id }, assistantId);
+    } finally {
+      setIsLoading(false);
+      setStatusMessage('');
+      void refreshLesson(id);
+    }
+  }, [streamReply, refreshLesson]);
+
+  const initStarted = useRef(false);
   const initSession = useCallback(async () => {
     setInitError(false);
     setBooting(true);
@@ -93,28 +151,30 @@ export const LessonPage: React.FC<{ tutorId: string }> = ({ tutorId }) => {
       const found = await api.getTutor(tutorId);
       if (!found) { setTutorMissing(true); return; }
       setTutor(found);
-      const stored = localStorage.getItem(sessionKey);
-      if (stored) {
-        setSessionId(stored);
-        const history = await api.getSessionHistory(stored);
-        if (history.messages?.length > 0) {
-          setMessages(mergeConsecutive(history.messages));
-          void refreshLesson(stored);
-          return;
-        }
+      const { session_id: id } = await api.createNewSession(tutorId);
+      setSessionId(id);
+      const history = await api.getSessionHistory(id);
+      void refreshLesson(id);
+      if (history.messages?.length > 0) {
+        setMessages(mergeConsecutive(history.messages));
+        setBooting(false);
+      } else {
+        setBooting(false);
+        await openLesson(id);
       }
-      const created = await api.createNewSession(tutorId);
-      setSessionId(created.session_id);
-      localStorage.setItem(sessionKey, created.session_id);
     } catch (err) {
       console.error('Session init error:', err);
       setInitError(true);
     } finally {
       setBooting(false);
     }
-  }, [refreshLesson, tutorId, sessionKey]);
+  }, [refreshLesson, openLesson, tutorId]);
 
-  useEffect(() => { void initSession(); }, [initSession]);
+  useEffect(() => {
+    if (initStarted.current) return;  // StrictMode runs effects twice; only open one session and one lesson
+    initStarted.current = true;
+    void initSession();
+  }, [initSession]);
 
   const handleVoiceEvent = (event: VoiceLessonEvent) => {
     if (event.type === 'status') { setStatusMessage(event.message || ''); return; }
@@ -222,46 +282,8 @@ export const LessonPage: React.FC<{ tutorId: string }> = ({ tutorId }) => {
       { id: assistantId, role: 'assistant', content: '', sources: [], created_at: new Date().toISOString() },
     ]);
     setIsLoading(true);
-
-    const patch = (fn: (m: Message) => Message) => setMessages((prev) => prev.map((m) => (m.id === assistantId ? fn(m) : m)));
     try {
-      const response = await fetch('/api/chat/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, message: text }),
-      });
-      if (!response.ok || !response.body) throw new Error('Stream request failed');
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let accumulated = '';
-
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const payload = line.slice(6).trim();
-          if (!payload) continue;
-          try {
-            const event = JSON.parse(payload);
-            if (event.type === 'status') setStatusMessage(event.message || '');
-            else if (event.type === 'lesson') setLesson(event.lesson);
-            else if (event.type === 'sources') patch((m) => ({ ...m, sources: event.sources }));
-            else if (event.type === 'token') { setStatusMessage(''); accumulated += event.content; patch((m) => ({ ...m, content: accumulated })); }
-            else if (event.type === 'error') patch((m) => ({ ...m, content: accumulated || 'Sorry, something went wrong while answering. Please try again.' }));
-            else if (event.type === 'done') patch((m) => ({ ...m, id: event.message_id || m.id }));
-          } catch (err) {
-            console.error('SSE parse error:', err);
-          }
-        }
-      }
-    } catch (err) {
-      console.error('Chat error:', err);
-      patch((m) => ({ ...m, content: 'We could not reach your tutor. Please check your connection and try again.' }));
+      await streamReply('/chat/stream', { session_id: sessionId, message: text }, assistantId);
     } finally {
       setIsLoading(false);
       setStatusMessage('');
@@ -273,7 +295,7 @@ export const LessonPage: React.FC<{ tutorId: string }> = ({ tutorId }) => {
     if (!sessionId || isLoading) return;
     try {
       setLesson(await api.resetLesson(sessionId));
-      setBanner('New topic: ask about anything in your course');
+      setBanner('Free topic: ask about anything in this course');
     } catch (err) {
       console.error('Reset lesson error:', err);
     }
@@ -300,19 +322,17 @@ export const LessonPage: React.FC<{ tutorId: string }> = ({ tutorId }) => {
     return () => window.clearTimeout(timer);
   }, [banner]);
 
-  const newSession = async () => {
+  const restartLesson = async () => {
     if (!sessionId || isVoiceActive || isLoading) return;
-    if (messages.length > 0 && !window.confirm('Start a new session? This clears the current lesson.')) return;
+    if (messages.length > 0 && !window.confirm('Restart this lesson from the beginning? Lessons you have already completed stay saved.')) return;
     try {
       await api.clearSession(sessionId);
       setMessages([]);
       setLesson({ lesson_stage: 'INIT', current_topic: '', student_turns: 0 });
       lastStage.current = 'INIT';
-      const created = await api.createNewSession(tutorId);
-      setSessionId(created.session_id);
-      localStorage.setItem(sessionKey, created.session_id);
+      await openLesson(sessionId);
     } catch (err) {
-      console.error('Clear session error:', err);
+      console.error('Restart lesson error:', err);
     }
   };
 
@@ -359,15 +379,16 @@ export const LessonPage: React.FC<{ tutorId: string }> = ({ tutorId }) => {
             <ArrowLeftRight className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate font-medium">{tutor?.name ?? 'Tutors'}</span>
           </Link>
+          <CourseProgress course={lesson.course} />
           <div className="hidden md:block">
             <LessonProgress lesson={lesson} busy={isLoading || isVoiceActive} onNewTopic={() => void startNewTopic()} />
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={newSession} disabled={isVoiceActive || isLoading} className="btn btn-ghost !px-3 !py-2 text-xs" title="Clear this lesson and start fresh">
-            <RotateCcw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">New session</span>
+          <button onClick={restartLesson} disabled={isVoiceActive || isLoading} className="btn btn-ghost !px-3 !py-2 text-xs" title="Restart the current lesson">
+            <RotateCcw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Restart lesson</span>
           </button>
-          <Link to="/studio" className="hidden px-2 py-2 text-xs font-medium text-ink-600 hover:text-ink-900 sm:block">Instructors</Link>
+          <UserMenu />
         </div>
       </header>
       <div className="border-b border-ink-200 bg-surface px-4 py-1.5 md:hidden"><LessonProgress lesson={lesson} busy={isLoading || isVoiceActive} onNewTopic={() => void startNewTopic()} /></div>
@@ -394,7 +415,7 @@ export const LessonPage: React.FC<{ tutorId: string }> = ({ tutorId }) => {
               thinking={thinking}
               thinkingLabel={statusMessage || undefined}
               followLive={isVoiceActive}
-              starters={STARTERS}
+              starters={NO_STARTERS}
               checkpoint={lesson.awaiting_confirmation || undefined}
               disabled={!sessionId || (isVoiceActive && voice.status !== 'listening')}
               onAsk={(t) => void ask(t)}

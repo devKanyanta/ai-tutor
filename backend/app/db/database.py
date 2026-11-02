@@ -22,6 +22,52 @@ def init_db():
     );
     """)
 
+    # Student accounts. Passwords are salted scrypt hashes; tokens are stored only as SHA-256 digests.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS auth_tokens (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    );
+    """)
+
+    # A tutor's ordered course outline (built from its documents) and each student's progress through it.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS course_lessons (
+        id TEXT PRIMARY KEY,
+        tutor_id TEXT NOT NULL,
+        document_id TEXT NOT NULL,
+        part INTEGER NOT NULL DEFAULT 0,
+        chunk_start INTEGER NOT NULL DEFAULT 0,
+        chunk_end INTEGER NOT NULL DEFAULT 0, -- exclusive
+        position INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        title_custom INTEGER NOT NULL DEFAULT 0
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_course_lessons_tutor ON course_lessons (tutor_id, position)")
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS lesson_progress (
+        user_id TEXT NOT NULL,
+        lesson_id TEXT NOT NULL,
+        status TEXT NOT NULL, -- in_progress, completed
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMP,
+        PRIMARY KEY (user_id, lesson_id)
+    );
+    """)
+
     # Documents table (REQ-IN-03, REQ-IN-04)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS documents (
@@ -65,11 +111,17 @@ def init_db():
     """)
 
     # Multi-tutor ownership (added after the first release)
-    for table in ("documents", "sessions"):
+    for table, column in (
+        ("documents", "tutor_id TEXT"),
+        ("sessions", "tutor_id TEXT"),
+        ("sessions", "user_id TEXT"),
+        ("sessions", "course_lesson_id TEXT"),
+    ):
         try:
-            cursor.execute(f"ALTER TABLE {table} ADD COLUMN tutor_id TEXT")
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column}")
         except Exception:
             pass
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id, tutor_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_tutor ON documents (tutor_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_tutor ON sessions (tutor_id)")
 

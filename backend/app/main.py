@@ -10,6 +10,7 @@ from app.db.database import get_db, init_db
 from app.rag.vector_store import vector_store
 from app.api.admin import router as admin_router
 from app.api.chat import router as chat_router
+from app.api.auth import router as auth_router
 from app.api.health import router as health_router
 
 logging.basicConfig(
@@ -56,6 +57,7 @@ app.add_middleware(
 # Register API routes
 app.include_router(health_router, prefix=settings.API_V1_STR)
 app.include_router(admin_router, prefix=settings.API_V1_STR)
+app.include_router(auth_router, prefix=settings.API_V1_STR)
 app.include_router(chat_router, prefix=settings.API_V1_STR)
 
 # Serve the built React app from the same process when available (single-service hosting).

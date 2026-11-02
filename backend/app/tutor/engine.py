@@ -16,7 +16,7 @@ from app.tutor.prompts import (
     is_simple_greeting,
     tutor_persona_block,
 )
-from app.tutor import lesson
+from app.tutor import course, lesson
 from app.tutor.memory import memory
 
 logger = logging.getLogger(__name__)
@@ -36,19 +36,28 @@ class TutorEngine:
             except Exception as e:
                 logger.warning(f"Failed to initialize Gemini Client in TutorEngine: {e}")
 
-    async def stream_response(self, session_id: str, user_message: str) -> AsyncGenerator[Dict[str, Any], None]:
+    async def stream_response(self, session_id: str, user_message: str, opening: bool = False) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Stream tutor response via Server-Sent Events (SSE).
         Yields dictionaries with event types: 'sources', 'token', 'done', 'error'.
+
+        With opening=True there is no student message: the tutor speaks first and starts (or resumes)
+        the student's course lesson instead of asking what to study.
         """
         # Ensure session exists
         session_id = memory.get_or_create_session(session_id)
 
+        # A bare "hi" before any lesson has started is just the student arriving: open the course lesson.
+        if not opening and is_simple_greeting(user_message) and not lesson.load_state(session_id).plan \
+                and course.session_course(session_id):
+            opening = True
+
         # Record user message in memory
-        memory.add_message(session_id=session_id, role="user", content=user_message)
+        if not opening:
+            memory.add_message(session_id=session_id, role="user", content=user_message)
 
         # 1. Guardrail Check: Jailbreak / Prompt Injection (REQ-AI-04)
-        if check_jailbreak_attempt(user_message):
+        if not opening and check_jailbreak_attempt(user_message):
             for token in JAILBREAK_REFUSAL_RESPONSE.split(" "):
                 yield {"type": "token", "content": token + " "}
                 await asyncio.sleep(0.02)
@@ -80,11 +89,12 @@ class TutorEngine:
         # Prepare conversation history for context (REQ-UI-03)
         history = memory.get_recent_messages(session_id)
         # Exclude the message we just saved
-        past_turns = [m for m in history[:-1] if m.get("content")] if len(history) > 1 else []
+        earlier = history if opening else history[:-1]
+        past_turns = [m for m in earlier if m.get("content")]
 
         # 2.5 Special Handling for Simple Conversational Greetings
         # If the student simply says "hey", "hello", "hi", etc., greet them warmly without dumping irrelevant chunks!
-        if is_simple_greeting(user_message):
+        if not opening and is_simple_greeting(user_message):
             greeting_prompt = (
                 f"{SOCRATIC_TUTOR_SYSTEM_PROMPT}\n\n"
                 f"The student just initiated or greeted the session with: \"{user_message}\".\n"
@@ -160,9 +170,15 @@ class TutorEngine:
         async def on_status(message: str):
             await status_queue.put(message)
 
-        prep_task = asyncio.create_task(lesson.prepare_turn(
-            session_id, user_message, retrieval_query, retriever.for_tutor(tutor_id), self.client, on_status
-        ))
+        if opening:
+            user_message = "(The student has just opened the lesson.)"
+            prep_task = asyncio.create_task(lesson.open_session(
+                session_id, retriever.for_tutor(tutor_id), self.client, on_status
+            ))
+        else:
+            prep_task = asyncio.create_task(lesson.prepare_turn(
+                session_id, user_message, retrieval_query, retriever.for_tutor(tutor_id), self.client, on_status
+            ))
         while not prep_task.done():
             try:
                 yield {"type": "status", "message": await asyncio.wait_for(status_queue.get(), timeout=0.1)}
@@ -171,6 +187,12 @@ class TutorEngine:
         while not status_queue.empty():
             yield {"type": "status", "message": status_queue.get_nowait()}
         prep = prep_task.result()
+        if prep is None:  # opening a tutor whose course has no lessons yet
+            msg = f"Welcome to {tutor['name']}! There are no lessons ready yet. Please check back soon."
+            msg_id = memory.add_message(session_id=session_id, role="assistant", content=msg)
+            yield {"type": "token", "content": msg}
+            yield {"type": "done", "message_id": msg_id, "session_id": session_id}
+            return
         chunks, is_in_bounds = prep.chunks, prep.in_bounds
 
         # 4. Out-of-Bounds Handling (REQ-AI-03)

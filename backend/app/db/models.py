@@ -22,10 +22,16 @@ class TutorResponse(BaseModel):
     instructions: str = ""
     document_count: int = 0
     ready_documents: int = 0
+    lesson_count: int = 0
+    completed_lessons: int = 0
     created_at: str
 
 class NewSessionRequest(BaseModel):
     tutor_id: str = Field(min_length=1, max_length=100)
+    fresh: bool = False
+
+class OpenRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=100)
 
 class DocumentResponse(BaseModel):
     id: str

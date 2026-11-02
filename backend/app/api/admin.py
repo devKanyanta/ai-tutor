@@ -21,6 +21,8 @@ from app.db.models import (
     TutorResponse,
 )
 from app.ingestion.pipeline import pipeline
+from app.tutor import course
+from pydantic import BaseModel, Field
 from app.rag.vector_store import vector_store
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -108,6 +110,38 @@ async def update_tutor(tutor_id: str, payload: TutorUpdate, authorized: bool = D
             db.commit()
         return _tutor_response(db.execute("SELECT * FROM tutors WHERE id = ?", (tutor_id,)).fetchone(), db)
 
+class LessonOrderItem(BaseModel):
+    id: str
+    title: str = Field(min_length=1, max_length=120)
+
+class LessonOrder(BaseModel):
+    lessons: List[LessonOrderItem]
+
+@router.get("/tutors/{tutor_id}/lessons")
+async def get_tutor_lessons(tutor_id: str, authorized: bool = Depends(verify_admin_token)):
+    """The course outline students will work through, in order."""
+    _require_tutor(tutor_id)
+    return {"lessons": course.outline(tutor_id)}
+
+@router.put("/tutors/{tutor_id}/lessons")
+async def set_tutor_lessons(tutor_id: str, payload: LessonOrder, authorized: bool = Depends(verify_admin_token)):
+    """Reorder and/or rename lessons. The list must contain every lesson of this tutor exactly once."""
+    _require_tutor(tutor_id)
+    current = {l["id"]: l for l in course.outline(tutor_id)}
+    ids = [item.id for item in payload.lessons]
+    if sorted(ids) != sorted(current):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Send every lesson exactly once.")
+    with get_db() as db:
+        for position, item in enumerate(payload.lessons, 1):
+            title = item.title.strip()
+            custom = int(title != current[item.id]["title"]) 
+            db.execute(
+                "UPDATE course_lessons SET position = ?, title = ?, title_custom = CASE WHEN ? = 1 THEN 1 ELSE title_custom END WHERE id = ?",
+                (position, title, custom, item.id),
+            )
+        db.commit()
+    return {"lessons": course.outline(tutor_id)}
+
 @router.delete("/tutors/{tutor_id}")
 async def delete_tutor(tutor_id: str, authorized: bool = Depends(verify_admin_token)):
     """Delete a tutor together with its documents, vectors and student sessions."""
@@ -121,6 +155,8 @@ async def delete_tutor(tutor_id: str, authorized: bool = Depends(verify_admin_to
                 pass
             vector_store.delete_document(doc["id"])
             db.execute("DELETE FROM chunks WHERE document_id = ?", (doc["id"],))
+        db.execute("DELETE FROM lesson_progress WHERE lesson_id IN (SELECT id FROM course_lessons WHERE tutor_id = ?)", (tutor_id,))
+        db.execute("DELETE FROM course_lessons WHERE tutor_id = ?", (tutor_id,))
         db.execute("DELETE FROM documents WHERE tutor_id = ?", (tutor_id,))
         sessions = "SELECT id FROM sessions WHERE tutor_id = ?"
         db.execute(f"DELETE FROM feedback WHERE session_id IN ({sessions})", (tutor_id,))

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.db.database import get_db
+from app.tutor import course
 from app.tutor.memory import memory
 
 logger = logging.getLogger(__name__)
@@ -165,6 +166,8 @@ class LessonState:
     holds: int = 0
     marker: int = -1  # assistant-message count when we last advanced (guards against double-advance)
     gate: bool = False  # phase checkpoint: waiting for the student to agree to move to the next phase
+    in_course: bool = False       # this lesson is part of the tutor's course outline (so progress is tracked)
+    next_title: str = ""          # title of the following course lesson, if any
 
     @property
     def beats(self) -> List[Tuple[str, int]]:
@@ -195,12 +198,16 @@ def load_state(session_id: str) -> LessonState:
         plan = json.loads(row["lesson_plan"])
     except ValueError:
         return LessonState()
+    info = course.session_course(session_id)
+    current = info["current"] if info else None
     return LessonState(
         plan=plan,
         beat=row["lesson_beat"] if row["lesson_beat"] is not None else 0,
         holds=row["lesson_holds"] or 0,
         marker=row["lesson_marker"] if row["lesson_marker"] is not None else -1,
         gate=bool(row["lesson_gate"]),
+        in_course=bool(current),
+        next_title=(info["next"]["title"] if info and info["next"] else "") if current else "",
     )
 
 
@@ -221,11 +228,14 @@ def save_state(session_id: str, state: LessonState) -> None:
             ),
         )
         db.commit()
+    if state.done:
+        course.mark_session_lesson_complete(session_id)
 
 
 def reset_lesson(session_id: str) -> None:
-    """Forget the current plan so the next question starts a fresh lesson (conversation is kept)."""
+    """Forget the current plan so the next question starts a fresh (off-course) lesson; the conversation is kept."""
     save_state(session_id, LessonState())
+    course.set_session_lesson(session_id, None)
 
 
 # --------------------------------------------------------------------------- turn classification
@@ -366,6 +376,17 @@ def build_directive(state: LessonState, mode: str = "continue", hold: bool = Fal
         "knowledge, and do not teach anything this directive does not ask for.\n"
     )
 
+    if state.done and state.in_course:
+        if state.next_title:
+            return header + (
+                "LESSON COMPLETE. Warmly wrap up in one sentence, then tell the student the next lesson in the course is "
+                f"\"{state.next_title}\" and ask if they are ready to start it. Do not ask what topic they want, and do "
+                "not start teaching the next lesson until they say yes."
+            )
+        return header + (
+            "LESSON COMPLETE, and it was the last lesson: the student has finished the whole course. Congratulate them "
+            "warmly in two sentences and tell them they can ask you to review anything in the course."
+        )
     if state.done:
         suggestion = f" You could suggest studying next: {plan['next_up']}." if plan["next_up"] else ""
         return header + (
@@ -422,7 +443,15 @@ def build_directive(state: LessonState, mode: str = "continue", hold: bool = Fal
             + ("Give no feedback (the student only acknowledged); " if ack else "Give specific feedback on the student's last attempt, then ")
             + "summarise the key "
             f"takeaways in clear spoken sentences: {' | '.join(plan['takeaways'])}. "
-            f"Acknowledge their progress.{suggestion} Finish by asking what they would like to study next."
+            + (
+                (
+                    f"Acknowledge their progress. Finish by telling them the next lesson is \"{state.next_title}\" and "
+                    "asking if they are ready for it."
+                    if state.next_title else
+                    "Acknowledge their progress and congratulate them: this was the last lesson of the course."
+                ) if state.in_course else
+                f"Acknowledge their progress.{suggestion} Finish by asking what they would like to study next."
+            )
         )
 
     if state.gate:
@@ -460,7 +489,7 @@ def public_state(session_id: str) -> Dict[str, Any]:
     if not state.plan:
         return {"lesson_stage": "INIT", "current_topic": "", "student_turns": student_turns,
                 "complete": False, "objective": "", "phases": [], "beat": 0, "total_beats": 0,
-                "awaiting_confirmation": ""}
+                "awaiting_confirmation": "", "course": course_state(session_id)}
 
     beats, plan = state.beats, state.plan
     items = {
@@ -492,6 +521,21 @@ def public_state(session_id: str) -> Dict[str, Any]:
         "beat": min(state.beat, len(beats)),
         "total_beats": len(beats),
         "awaiting_confirmation": next_phase_label(state) if awaiting_confirmation(state) else "",
+        "course": course_state(session_id),
+    }
+
+
+def course_state(session_id: str) -> Optional[Dict[str, Any]]:
+    """Course progress for the UI: the outline with statuses and which lesson is current."""
+    info = course.session_course(session_id)
+    if not info:
+        return None
+    return {
+        "total": info["total"],
+        "completed": info["completed"],
+        "current_id": info["current"]["id"] if info["current"] else None,
+        "current_position": info["current"]["position"] if info["current"] else None,
+        "lessons": info["lessons"],
     }
 
 
@@ -659,6 +703,13 @@ async def prepare_turn(
     state = load_state(session_id)
     mode = classify_turn(state, user_message)
 
+    # Finished a course lesson and the student is ready: go straight to the next one.
+    if mode == "closing" and state.done and state.in_course:
+        info = course.session_info(session_id)
+        upcoming = course.next_lesson(info["tutor_id"], info["user_id"]) if info else None
+        if upcoming:
+            return await start_course_lesson(session_id, upcoming, client, on_status, intro="next")
+
     if mode == "continue":
         state, hold = advance_state(session_id, state, user_message)
         focus = focus_text(state)
@@ -690,4 +741,111 @@ async def prepare_turn(
     plan = await create_plan(client, user_message, plan_chunks)
     state = LessonState(plan=plan, beat=0, holds=0, marker=memory.count_assistant_messages(session_id))
     save_state(session_id, state)
+    course.set_session_lesson(session_id, None)  # a topic the student chose is outside the course, so no progress
     return TurnPrep(chunks=chunks, in_bounds=True, directive=build_directive(state), mode=mode, new_plan=True)
+
+
+# --------------------------------------------------------------------------- course lessons
+def _first_name(name: Optional[str]) -> str:
+    return (name or "").strip().split(" ")[0]
+
+
+def resume_question(state: LessonState) -> str:
+    """The question the student was last asked, so a returning student can simply answer it."""
+    plan = state.plan
+    if state.gate or (state.stage == "WARMUP"):
+        nxt = next_phase_label(state)
+        return f"ask whether they are ready to move on to {nxt}" if nxt else "ask if they are ready to continue"
+    stage, idx = state.beats[state.beat]
+    if stage == "LEARN":
+        return f"re-ask this check question: {plan['learn'][idx]['check']}"
+    if stage == "PRACTICE":
+        return f"set this task again: {plan['practice'][idx]['task']}"
+    return "ask what they would like to do next"
+
+
+def resume_directive(state: LessonState, student_name: str) -> str:
+    plan = state.plan
+    stage = STAGE_LABELS.get(state.stage, state.stage.title())
+    return (
+        f"Lesson: {plan['topic']}. Objective: {plan['objective']}\n"
+        "WELCOME BACK. The student has returned to a lesson already in progress. "
+        f"Greet {student_name or 'them'} warmly in one short sentence, then in one sentence remind them where you "
+        f"stopped (the lesson \"{plan['topic']}\", {stage} phase). Then {resume_question(state)}. "
+        "Do NOT ask what topic they want, do not restart the lesson and do not teach anything new this turn."
+    )
+
+
+async def start_course_lesson(
+    session_id: str,
+    lesson: Dict[str, Any],
+    client: Any,
+    on_status: Optional[Callable[[str], Awaitable[None]]] = None,
+    intro: str = "first",
+) -> TurnPrep:
+    """Plan a course lesson from its own material and open it. intro: first | back | next."""
+    chunks = course.lesson_chunks(lesson["id"])
+    if on_status:
+        await on_status("Preparing your lesson…")
+    plan = await create_plan(client, lesson["title"], chunks)
+    state = LessonState(plan=plan, beat=0, holds=0, marker=memory.count_assistant_messages(session_id))
+    save_state(session_id, state)
+    course.set_session_lesson(session_id, lesson["id"])
+    state = load_state(session_id)
+
+    info = course.session_info(session_id) or {}
+    total = len(course.outline(info.get("tutor_id"))) if info.get("tutor_id") else 0
+    name = _first_name(info.get("user_name"))
+    where = f"Lesson {lesson['position']} of {total}: \"{lesson['title']}\""
+    if intro == "next":
+        opening = f"The previous lesson is finished. Say a brief, upbeat transition and that you are now starting {where}."
+    elif intro == "back":
+        opening = f"Greet {name or 'the student'} by name, welcome them back in one short sentence and say you are continuing the course with {where}."
+    else:
+        opening = (
+            f"This is the student's first session. Greet {name or 'the student'} by name in one short sentence, say you are "
+            f"{info.get('tutor_name') or 'their tutor'} and that you will begin the course with {where}."
+        )
+    directive = (
+        f"SESSION OPENING. {opening} Do NOT ask which topic they want to learn: the course plan decides. "
+        "Keep this greeting to one or two sentences, then continue with the warm-up below.\n"
+        + build_directive(state)
+    )
+    return TurnPrep(chunks=chunks[:4], in_bounds=True, directive=directive, mode="new_lesson", new_plan=True)
+
+
+async def open_session(
+    session_id: str,
+    retrieve: Retrieve,
+    client: Any,
+    on_status: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> Optional[TurnPrep]:
+    """
+    The tutor's first words in a session. No topic question: resume the lesson in progress, otherwise start
+    the student's next unfinished course lesson. None when the tutor has no lessons yet.
+    """
+    info = course.session_info(session_id)
+    if not info or not info["tutor_id"] or not info["user_id"]:
+        return None
+    state = load_state(session_id)
+
+    if state.plan and not state.done:
+        focus = focus_text(state)
+        chunks, _ = await asyncio.to_thread(retrieve, focus[:600]) if focus else ([], False)
+        return TurnPrep(chunks=chunks, in_bounds=True, directive=resume_directive(state, _first_name(info["user_name"])), mode="resume")
+
+    lessons = course.outline(info["tutor_id"], info["user_id"])
+    if not lessons:
+        return None
+    upcoming = course.next_lesson(info["tutor_id"], info["user_id"])
+    if upcoming:
+        started_before = any(l["status"] != "not_started" for l in lessons)
+        return await start_course_lesson(session_id, upcoming, client, on_status, intro="back" if started_before else "first")
+    return TurnPrep(
+        chunks=[], in_bounds=True, mode="complete",
+        directive=(
+            f"SESSION OPENING. The student ({_first_name(info['user_name']) or 'a returning student'}) has already completed every "
+            "lesson in the course. Welcome them back, congratulate them in one sentence, and offer to review any part of the "
+            "course or answer questions about it. Ask what they would like to go over."
+        ),
+    )

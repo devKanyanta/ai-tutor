@@ -123,9 +123,11 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
       <div className="board-scroll relative flex min-h-0 flex-1 items-center overflow-y-auto px-8 py-4 sm:px-16 lg:px-24" aria-live="polite">
         {!turn && !thinking && (
           <div className="anim-fade-in mx-auto w-full max-w-2xl">
-            <h2 className="text-3xl font-semibold text-white sm:text-5xl">What shall we study today?</h2>
+            <h2 className="text-3xl font-semibold text-white sm:text-5xl">{starters.length ? 'What shall we study today?' : 'Your lesson is ready when you are'}</h2>
             <p className="mt-4 max-w-lg text-base text-[#c9c3b3]">
-              Start a voice lesson, or type a question. Explanations appear here one idea at a time, taken from your course materials.
+              {starters.length
+                ? 'Start a voice lesson, or type a question. Explanations appear here one idea at a time, taken from your course materials.'
+                : 'Press “Start voice lesson” to talk it through, or type below. Explanations appear here one idea at a time.'}
             </p>
             <ul className="mt-8 divide-y divide-white/10 border-y border-white/10">
               {starters.map((s) => (

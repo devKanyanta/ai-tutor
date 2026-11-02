@@ -10,7 +10,7 @@ class ConversationMemory:
     def __init__(self, max_history_turns: int = 10):
         self.max_history_turns = max_history_turns
 
-    def get_or_create_session(self, session_id: Optional[str] = None, tutor_id: Optional[str] = None) -> str:
+    def get_or_create_session(self, session_id: Optional[str] = None, tutor_id: Optional[str] = None, user_id: Optional[str] = None) -> str:
         """Ensure session exists or create a new session ID. A session belongs to one tutor for life."""
         with get_db() as db:
             if session_id:
@@ -18,14 +18,23 @@ class ConversationMemory:
                 if row:
                     return session_id
                 # Insert with the requested session_id if provided
-                db.execute("INSERT INTO sessions (id, title, tutor_id) VALUES (?, ?, ?)", (session_id, "New Learning Session", tutor_id))
+                db.execute("INSERT INTO sessions (id, title, tutor_id, user_id) VALUES (?, ?, ?, ?)", (session_id, "New Learning Session", tutor_id, user_id))
                 db.commit()
                 return session_id
 
             new_id = str(uuid.uuid4())
-            db.execute("INSERT INTO sessions (id, title, tutor_id) VALUES (?, ?, ?)", (new_id, "New Learning Session", tutor_id))
+            db.execute("INSERT INTO sessions (id, title, tutor_id, user_id) VALUES (?, ?, ?, ?)", (new_id, "New Learning Session", tutor_id, user_id))
             db.commit()
             return new_id
+
+    def find_active_session(self, user_id: str, tutor_id: str) -> Optional[str]:
+        """The student's most recent session with this tutor, so their lesson is always picked back up."""
+        with get_db() as db:
+            row = db.execute(
+                "SELECT id FROM sessions WHERE user_id = ? AND tutor_id = ? ORDER BY last_active DESC, rowid DESC LIMIT 1",
+                (user_id, tutor_id),
+            ).fetchone()
+        return row["id"] if row else None
 
     def get_session_tutor(self, session_id: str) -> Optional[Dict[str, Any]]:
         """The tutor this session belongs to (name, subject, instructions), or None if it has none."""
@@ -170,7 +179,7 @@ class ConversationMemory:
         with get_db() as db:
             db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             db.execute(
-                "UPDATE sessions SET current_topic = NULL, lesson_stage = 'INIT', understanding_score = 0, lesson_plan = NULL, lesson_beat = -1, lesson_holds = 0, lesson_marker = -1, lesson_gate = 0, last_active = CURRENT_TIMESTAMP WHERE id = ?",
+                "UPDATE sessions SET current_topic = NULL, lesson_stage = 'INIT', understanding_score = 0, lesson_plan = NULL, lesson_beat = -1, lesson_holds = 0, lesson_marker = -1, lesson_gate = 0, course_lesson_id = NULL, last_active = CURRENT_TIMESTAMP WHERE id = ?",
                 (session_id,)
             )
             db.commit()
