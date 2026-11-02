@@ -7,6 +7,27 @@ from starlette.websockets import WebSocketDisconnect
 from app.main import app
 from app.core.config import settings
 
+def make_tutor(client, name, **extra):
+    res = client.post(
+        "/api/admin/tutors",
+        headers={"Authorization": f"Bearer {settings.ADMIN_TOKEN}"},
+        json={"name": name, "subject": name, **extra},
+    )
+    assert res.status_code == 201, res.text
+    return res.json()["id"]
+
+
+def upload_text(client, tutor_id, filename, text):
+    res = client.post(
+        "/api/admin/documents/upload",
+        headers={"Authorization": f"Bearer {settings.ADMIN_TOKEN}"},
+        data={"tutor_id": tutor_id},
+        files={"file": (filename, io.BytesIO(text.encode()), "text/plain")},
+    )
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
 def test_health_check():
     """Verify health check endpoint returns 200 and schema."""
     with TestClient(app) as client:
@@ -48,6 +69,7 @@ def test_document_lifecycle_rag_and_kpis():
     with TestClient(app) as client:
         token = settings.ADMIN_TOKEN
         headers = {"Authorization": f"Bearer {token}"}
+        tutor_id = make_tutor(client, "Calculus Tutor")
 
         # 1. Upload curriculum file (REQ-IN-01..04)
         sample_content = (
@@ -60,6 +82,7 @@ def test_document_lifecycle_rag_and_kpis():
         upload_res = client.post(
             "/api/admin/documents/upload",
             headers=headers,
+            data={"tutor_id": tutor_id},
             files={"file": ("calculus.txt", file_bytes, "text/plain")}
         )
         assert upload_res.status_code == 200
@@ -76,6 +99,7 @@ def test_document_lifecycle_rag_and_kpis():
         batch_res = client.post(
             "/api/admin/documents/batch-upload",
             headers=headers,
+            data={"tutor_id": tutor_id},
             files=batch_files
         )
         assert batch_res.status_code == 200
@@ -103,7 +127,7 @@ def test_document_lifecycle_rag_and_kpis():
         assert updated_doc["status"] == "READY"
 
         # 3. Create session & test streaming chat
-        new_sess = client.post("/api/chat/session/new")
+        new_sess = client.post("/api/chat/session/new", json={"tutor_id": tutor_id})
         assert new_sess.status_code == 200
         session_id = new_sess.json()["session_id"]
 
@@ -174,23 +198,81 @@ def test_document_lifecycle_rag_and_kpis():
         # 9. Delete document (REQ-IN-03)
         del_res = client.delete(f"/api/admin/documents/{doc_id}", headers=headers)
         assert del_res.status_code == 200
+        client.delete(f"/api/admin/tutors/{tutor_id}", headers=headers)
 
 
 def test_upload_filename_cannot_escape_upload_dir():
     with TestClient(app) as client:
         headers = {"Authorization": f"Bearer {settings.ADMIN_TOKEN}"}
+        tutor_id = make_tutor(client, "Biology Tutor")
         res = client.post(
             "/api/admin/documents/upload",
+            data={"tutor_id": tutor_id},
             files={"file": ("../../evil.txt", io.BytesIO(b"Photosynthesis converts light to energy."), "text/plain")},
             headers=headers,
         )
         assert res.status_code == 200
         assert res.json()["filename"] == "evil.txt"
         assert not (settings.UPLOAD_DIR.parent.parent / "evil.txt").exists()
-        client.delete(f"/api/admin/documents/{res.json()['id']}", headers=headers)
+        client.delete(f"/api/admin/tutors/{tutor_id}", headers=headers)
 
 
 def test_chat_rejects_invalid_payloads():
     with TestClient(app) as client:
         assert client.post("/api/chat/stream", json={"session_id": "s", "message": ""}).status_code == 422
         assert client.post("/api/chat/feedback", json={"session_id": "s", "message_id": "m", "rating": 5}).status_code == 422
+
+
+def test_tutors_keep_their_curricula_separate():
+    """A tutor only ever retrieves its own material; other tutors' documents are invisible to it."""
+    from app.rag.retriever import retriever
+    with TestClient(app) as client:
+        headers = {"Authorization": f"Bearer {settings.ADMIN_TOKEN}"}
+        history = make_tutor(client, "History Tutor", instructions="Teach through stories.")
+        chem = make_tutor(client, "Chemistry Tutor")
+        try:
+            upload_text(client, history, "rome.txt", "The Roman Republic fell after Julius Caesar crossed the Rubicon river in 49 BC.")
+            upload_text(client, chem, "atoms.txt", "Covalent bonds form when atoms share electron pairs between nuclei.")
+
+            hits, _ = retriever.retrieve("Julius Caesar crossed the Rubicon", tutor_id=history)
+            assert hits and {h["filename"] for h in hits} == {"rome.txt"}
+            hits, _ = retriever.retrieve("Julius Caesar crossed the Rubicon", tutor_id=chem)
+            assert {h["filename"] for h in hits} <= {"atoms.txt"}
+            assert retriever.retrieve("anything", tutor_id=None) == ([], False)
+
+            docs = client.get(f"/api/admin/documents?tutor_id={chem}", headers=headers).json()
+            assert [d["filename"] for d in docs["documents"]] == ["atoms.txt"]
+
+            # Public catalogue exposes tutors but never their private instructions.
+            catalogue = client.get("/api/chat/tutors").json()["tutors"]
+            mine = {t["id"]: t for t in catalogue}
+            assert mine[history]["ready_documents"] == 1 and "instructions" not in mine[history] or not mine[history].get("instructions")
+
+            # A session is bound to the tutor it was created with.
+            sid = client.post("/api/chat/session/new", json={"tutor_id": history}).json()["session_id"]
+            from app.tutor.memory import memory
+            assert memory.get_session_tutor(sid)["name"] == "History Tutor"
+            assert client.post("/api/chat/session/new", json={"tutor_id": "nope"}).status_code == 404
+
+            m = client.get(f"/api/admin/metrics?tutor_id={chem}", headers=headers).json()
+            assert m["total_documents"] == 1 and m["total_sessions"] == 0
+        finally:
+            for t in (history, chem):
+                client.delete(f"/api/admin/tutors/{t}", headers=headers)
+
+
+def test_deleting_a_tutor_removes_its_material():
+    from app.rag.vector_store import vector_store
+    with TestClient(app) as client:
+        headers = {"Authorization": f"Bearer {settings.ADMIN_TOKEN}"}
+        tid = make_tutor(client, "Temp Tutor")
+        upload_text(client, tid, "t.txt", "Temporary material about tectonic plates.")
+        assert vector_store.count(tid) > 0
+        assert client.delete(f"/api/admin/tutors/{tid}", headers=headers).status_code == 200
+        assert vector_store.count(tid) == 0
+        assert client.get(f"/api/chat/tutors/{tid}").status_code == 404
+
+
+def test_tutor_admin_requires_auth():
+    with TestClient(app) as client:
+        assert client.post("/api/admin/tutors", json={"name": "x"}).status_code == 401

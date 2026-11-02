@@ -2,8 +2,34 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Literal
 from datetime import datetime
 
+class TutorCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    subject: str = Field(default="", max_length=120)
+    description: str = Field(default="", max_length=600)
+    instructions: str = Field(default="", max_length=2000)
+
+class TutorUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    subject: Optional[str] = Field(default=None, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=600)
+    instructions: Optional[str] = Field(default=None, max_length=2000)
+
+class TutorResponse(BaseModel):
+    id: str
+    name: str
+    subject: str
+    description: str
+    instructions: str = ""
+    document_count: int = 0
+    ready_documents: int = 0
+    created_at: str
+
+class NewSessionRequest(BaseModel):
+    tutor_id: str = Field(min_length=1, max_length=100)
+
 class DocumentResponse(BaseModel):
     id: str
+    tutor_id: Optional[str] = None
     filename: str
     file_type: str
     file_size: int

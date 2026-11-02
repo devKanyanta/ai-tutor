@@ -27,6 +27,10 @@ class IngestionPipeline:
                 )
                 db.commit()
 
+            with get_db() as db:
+                owner = db.execute("SELECT tutor_id FROM documents WHERE id = ?", (doc_id,)).fetchone()
+            tutor_id = owner["tutor_id"] if owner else None
+
             # 1. Parse document
             raw_text = DocumentParser.parse(file_path, file_type)
             if not raw_text.strip():
@@ -55,7 +59,8 @@ class IngestionPipeline:
                 document_id=doc_id,
                 filename=filename,
                 chunks=chunks,
-                vectors=vectors
+                vectors=vectors,
+                tutor_id=tutor_id,
             )
 
             # 6. Mark document as READY (REQ-IN-04)

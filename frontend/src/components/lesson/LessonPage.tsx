@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Mic, MicOff, RotateCcw, Send, WifiOff, AlertCircle, Loader2 } from 'lucide-react';
+import { ArrowLeftRight, Mic, MicOff, RotateCcw, Send, WifiOff, AlertCircle, Loader2 } from 'lucide-react';
 import { Logo } from '../Logo';
 import { Link } from '../../router';
 import { LessonProgress } from './LessonProgress';
@@ -7,7 +7,7 @@ import { SlideDeck } from './SlideDeck';
 import { VoiceOrb } from './VoiceOrb';
 import { useVoiceLesson, type VoiceLessonEvent, type Pace } from './useVoiceLesson';
 import { api } from '../../services/api';
-import type { LessonState, Message } from '../../types';
+import type { LessonState, Message, Tutor } from '../../types';
 
 const STARTERS = [
   { title: 'Map the course', text: 'What topics do my course materials cover?' },
@@ -59,7 +59,10 @@ const mergeConsecutive = (list: Message[]): Message[] => {
   return out;
 };
 
-export const LessonPage: React.FC = () => {
+export const LessonPage: React.FC<{ tutorId: string }> = ({ tutorId }) => {
+  const sessionKey = `ai_tutor_session_id:${tutorId}`;
+  const [tutor, setTutor] = useState<Tutor | null>(null);
+  const [tutorMissing, setTutorMissing] = useState(false);
   const [sessionId, setSessionId] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -87,7 +90,10 @@ export const LessonPage: React.FC = () => {
     setInitError(false);
     setBooting(true);
     try {
-      const stored = localStorage.getItem('ai_tutor_session_id');
+      const found = await api.getTutor(tutorId);
+      if (!found) { setTutorMissing(true); return; }
+      setTutor(found);
+      const stored = localStorage.getItem(sessionKey);
       if (stored) {
         setSessionId(stored);
         const history = await api.getSessionHistory(stored);
@@ -97,16 +103,16 @@ export const LessonPage: React.FC = () => {
           return;
         }
       }
-      const created = await api.createNewSession();
+      const created = await api.createNewSession(tutorId);
       setSessionId(created.session_id);
-      localStorage.setItem('ai_tutor_session_id', created.session_id);
+      localStorage.setItem(sessionKey, created.session_id);
     } catch (err) {
       console.error('Session init error:', err);
       setInitError(true);
     } finally {
       setBooting(false);
     }
-  }, [refreshLesson]);
+  }, [refreshLesson, tutorId, sessionKey]);
 
   useEffect(() => { void initSession(); }, [initSession]);
 
@@ -302,9 +308,9 @@ export const LessonPage: React.FC = () => {
       setMessages([]);
       setLesson({ lesson_stage: 'INIT', current_topic: '', student_turns: 0 });
       lastStage.current = 'INIT';
-      const created = await api.createNewSession();
+      const created = await api.createNewSession(tutorId);
       setSessionId(created.session_id);
-      localStorage.setItem('ai_tutor_session_id', created.session_id);
+      localStorage.setItem(sessionKey, created.session_id);
     } catch (err) {
       console.error('Clear session error:', err);
     }
@@ -333,12 +339,26 @@ export const LessonPage: React.FC = () => {
   const latestStudent = studentTurns[studentTurns.length - 1];
   const earlier = studentTurns.slice(0, -1).reverse();
 
+  if (tutorMissing) {
+    return (
+      <div className="flex h-dvh flex-col items-center justify-center bg-paper px-6 text-center">
+        <p className="font-serif text-2xl font-semibold text-ink-900">That tutor isn’t available</p>
+        <p className="mt-2 max-w-sm text-ink-600">It may have been removed by its instructor.</p>
+        <Link to="/learn" className="btn btn-primary mt-6">Choose a tutor</Link>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-dvh flex-col bg-paper">
       {/* Top bar */}
       <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-ink-200 bg-surface px-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-6">
           <Logo />
+          <Link to="/learn" className="flex min-w-0 items-center gap-1.5 text-sm text-ink-600 hover:text-ink-900" title="Choose a different tutor">
+            <ArrowLeftRight className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate font-medium">{tutor?.name ?? 'Tutors'}</span>
+          </Link>
           <div className="hidden md:block">
             <LessonProgress lesson={lesson} busy={isLoading || isVoiceActive} onNewTopic={() => void startNewTopic()} />
           </div>

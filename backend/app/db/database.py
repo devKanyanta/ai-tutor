@@ -9,6 +9,19 @@ def init_db():
     conn.execute("PRAGMA journal_mode=WAL")
     cursor = conn.cursor()
     
+    # Tutors: each instructor-created tutor owns its own curriculum, so subjects never mix.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS tutors (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        subject TEXT NOT NULL DEFAULT '',
+        description TEXT NOT NULL DEFAULT '',
+        instructions TEXT NOT NULL DEFAULT '', -- optional teaching-style guidance from the instructor
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
     # Documents table (REQ-IN-03, REQ-IN-04)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS documents (
@@ -50,6 +63,15 @@ def init_db():
         last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
+
+    # Multi-tutor ownership (added after the first release)
+    for table in ("documents", "sessions"):
+        try:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN tutor_id TEXT")
+        except Exception:
+            pass
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_tutor ON documents (tutor_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_tutor ON sessions (tutor_id)")
 
     # Ensure columns exist if table was already created
     try:
@@ -113,7 +135,32 @@ def init_db():
     """)
 
     conn.commit()
+    _adopt_legacy_content(conn)
     conn.close()
+
+
+DEFAULT_TUTOR_ID = "general-tutor"
+
+
+def _adopt_legacy_content(conn: sqlite3.Connection) -> None:
+    """Content from before multi-tutor support goes to one default tutor so nothing is lost."""
+    orphans = conn.execute(
+        "SELECT (SELECT COUNT(*) FROM documents WHERE tutor_id IS NULL) + "
+        "(SELECT COUNT(*) FROM sessions WHERE tutor_id IS NULL AND EXISTS (SELECT 1 FROM messages WHERE session_id = sessions.id))"
+    ).fetchone()[0]
+    if not orphans:
+        return
+    conn.execute(
+        "INSERT OR IGNORE INTO tutors (id, name, subject, description) VALUES (?, ?, ?, ?)",
+        (DEFAULT_TUTOR_ID, "General Tutor", "All course materials",
+         "Your original course library, from before tutors were split by subject."),
+    )
+    conn.execute("UPDATE documents SET tutor_id = ? WHERE tutor_id IS NULL", (DEFAULT_TUTOR_ID,))
+    conn.execute(
+        "UPDATE sessions SET tutor_id = ? WHERE tutor_id IS NULL AND EXISTS (SELECT 1 FROM messages WHERE session_id = sessions.id)",
+        (DEFAULT_TUTOR_ID,),
+    )
+    conn.commit()
 
 @contextmanager
 def get_db():

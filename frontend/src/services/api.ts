@@ -1,4 +1,4 @@
-import type { DocumentItem, Metrics, BatchUploadResult, LessonState } from '../types';
+import type { DocumentItem, Metrics, BatchUploadResult, LessonState, Tutor, TutorAdmin, TutorInput } from '../types';
 
 // Relative by default: Vite proxies /api in dev, and the backend (or reverse proxy) serves it in production.
 export const BASE_URL: string = import.meta.env.VITE_API_BASE || '/api';
@@ -7,8 +7,25 @@ export const UNAUTHORIZED = 'UNAUTHORIZED';
 
 export const api = {
   // Chat APIs
-  createNewSession: async (): Promise<{ session_id: string }> => {
-    const res = await fetch(`${BASE_URL}/chat/session/new`, { method: 'POST' });
+  getTutors: async (): Promise<Tutor[]> => {
+    const res = await fetch(`${BASE_URL}/chat/tutors`);
+    if (!res.ok) throw new Error('Failed to load tutors');
+    return (await res.json()).tutors;
+  },
+
+  getTutor: async (tutorId: string): Promise<Tutor | null> => {
+    const res = await fetch(`${BASE_URL}/chat/tutors/${encodeURIComponent(tutorId)}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error('Failed to load tutor');
+    return res.json();
+  },
+
+  createNewSession: async (tutorId: string): Promise<{ session_id: string }> => {
+    const res = await fetch(`${BASE_URL}/chat/session/new`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tutor_id: tutorId }),
+    });
     if (!res.ok) throw new Error('Failed to create new session');
     return res.json();
   },
@@ -61,8 +78,36 @@ export const api = {
     return res.json();
   },
 
-  getDocuments: async (token: string): Promise<{ documents: DocumentItem[]; total_count: number }> => {
-    const res = await fetch(`${BASE_URL}/admin/documents`, {
+  // Instructor tutor management
+  getAdminTutors: async (token: string): Promise<TutorAdmin[]> => {
+    const res = await fetch(`${BASE_URL}/admin/tutors`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.status === 401) throw new Error(UNAUTHORIZED);
+    if (!res.ok) throw new Error('Failed to load tutors');
+    return res.json();
+  },
+
+  saveTutor: async (token: string, input: TutorInput, tutorId?: string): Promise<TutorAdmin> => {
+    const res = await fetch(`${BASE_URL}/admin/tutors${tutorId ? `/${tutorId}` : ''}`, {
+      method: tutorId ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(input),
+    });
+    if (res.status === 401) throw new Error(UNAUTHORIZED);
+    if (!res.ok) throw new Error('Could not save the tutor');
+    return res.json();
+  },
+
+  deleteTutor: async (token: string, tutorId: string) => {
+    const res = await fetch(`${BASE_URL}/admin/tutors/${tutorId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error('Failed to delete tutor');
+    return res.json();
+  },
+
+  getDocuments: async (token: string, tutorId: string): Promise<{ documents: DocumentItem[]; total_count: number }> => {
+    const res = await fetch(`${BASE_URL}/admin/documents?tutor_id=${encodeURIComponent(tutorId)}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (res.status === 401) throw new Error(UNAUTHORIZED);
@@ -70,8 +115,9 @@ export const api = {
     return res.json();
   },
 
-  uploadDocument: async (token: string, file: File): Promise<DocumentItem> => {
+  uploadDocument: async (token: string, tutorId: string, file: File): Promise<DocumentItem> => {
     const formData = new FormData();
+    formData.append('tutor_id', tutorId);
     formData.append('file', file);
     const res = await fetch(`${BASE_URL}/admin/documents/upload`, {
       method: 'POST',
@@ -85,8 +131,9 @@ export const api = {
     return res.json();
   },
 
-  batchUploadDocuments: async (token: string, files: File[]): Promise<BatchUploadResult> => {
+  batchUploadDocuments: async (token: string, tutorId: string, files: File[]): Promise<BatchUploadResult> => {
     const formData = new FormData();
+    formData.append('tutor_id', tutorId);
     files.forEach((file) => formData.append('files', file));
     const res = await fetch(`${BASE_URL}/admin/documents/batch-upload`, {
       method: 'POST',
@@ -124,8 +171,8 @@ export const api = {
     return res.json();
   },
 
-  getMetrics: async (token: string): Promise<Metrics> => {
-    const res = await fetch(`${BASE_URL}/admin/metrics`, {
+  getMetrics: async (token: string, tutorId: string): Promise<Metrics> => {
+    const res = await fetch(`${BASE_URL}/admin/metrics?tutor_id=${encodeURIComponent(tutorId)}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (res.status === 401) throw new Error(UNAUTHORIZED);

@@ -17,8 +17,32 @@ export interface Message {
   plain?: boolean;
 }
 
+/** What students see when choosing who to learn with. */
+export interface Tutor {
+  id: string;
+  name: string;
+  subject: string;
+  description: string;
+  document_count: number;
+  ready_documents: number;
+  created_at: string;
+}
+
+/** Instructor view: adds the private teaching guidance. */
+export interface TutorAdmin extends Tutor {
+  instructions: string;
+}
+
+export interface TutorInput {
+  name: string;
+  subject: string;
+  description: string;
+  instructions: string;
+}
+
 export interface DocumentItem {
   id: string;
+  tutor_id?: string | null;
   filename: string;
   file_type: string;
   file_size: number;

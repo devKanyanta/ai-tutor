@@ -117,14 +117,14 @@ class EmbeddedVectorStore:
         with open(self.metadata_file, "w", encoding="utf-8") as f:
             json.dump(self.metadata, f, indent=2)
 
-    def add_chunks(self, document_id: str, filename: str, chunks: List[str], vectors: List[List[float]]):
+    def add_chunks(self, document_id: str, filename: str, chunks: List[str], vectors: List[List[float]], tutor_id: Optional[str] = None):
         """Add document chunks and corresponding embedding vectors to index."""
         if not chunks or not vectors:
             return
         with self._lock:
-            self._add_chunks_locked(document_id, filename, chunks, vectors)
+            self._add_chunks_locked(document_id, filename, chunks, vectors, tutor_id)
 
-    def _add_chunks_locked(self, document_id: str, filename: str, chunks: List[str], vectors: List[List[float]]):
+    def _add_chunks_locked(self, document_id: str, filename: str, chunks: List[str], vectors: List[List[float]], tutor_id: Optional[str] = None):
         new_vecs = np.array(vectors, dtype=np.float32)
         # Normalize vectors for fast cosine similarity dot product
         norms = np.linalg.norm(new_vecs, axis=1, keepdims=True)
@@ -145,6 +145,7 @@ class EmbeddedVectorStore:
         for idx, chunk in enumerate(chunks):
             self.metadata.append({
                 "document_id": document_id,
+                "tutor_id": tutor_id,
                 "filename": filename,
                 "chunk_index": idx,
                 "snippet": chunk[:200] + ("..." if len(chunk) > 200 else ""),
@@ -172,10 +173,22 @@ class EmbeddedVectorStore:
 
         self._save()
 
-    def search(self, query_vector: List[float], top_k: int = settings.RETRIEVAL_TOP_K) -> List[Dict[str, Any]]:
+    def backfill_tutor_ids(self, owner_of: Dict[str, str]) -> int:
+        """Stamp chunks indexed before multi-tutor support with their document's tutor. Returns how many changed."""
+        with self._lock:
+            changed = 0
+            for meta in self.metadata:
+                if not meta.get("tutor_id") and meta.get("document_id") in owner_of:
+                    meta["tutor_id"] = owner_of[meta["document_id"]]
+                    changed += 1
+            if changed:
+                self._save()
+            return changed
+
+    def search(self, query_vector: List[float], top_k: int = settings.RETRIEVAL_TOP_K, tutor_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Cosine similarity retrieval in sub-millisecond execution (PERF-02).
-        Returns top_k items with relevance scores.
+        Returns top_k items with relevance scores. With tutor_id, only that tutor's chunks are searched.
         """
         with self._lock:
             embeddings, metadata = self.embeddings, self.metadata
@@ -191,9 +204,12 @@ class EmbeddedVectorStore:
         if embeddings.shape[1] != q_vec.shape[0]:
             return []
         scores = np.dot(embeddings, q_vec)
-        
+        if tutor_id is not None:
+            owned = np.fromiter((m.get("tutor_id") == tutor_id for m in metadata), dtype=bool, count=len(metadata))
+            scores = np.where(owned, scores, -np.inf)
+
         # Sort descending
-        top_indices = np.argsort(scores)[::-1][:top_k]
+        top_indices = [i for i in np.argsort(scores)[::-1][:top_k] if np.isfinite(scores[i])]
         
         results = []
         for idx in top_indices:
@@ -204,8 +220,10 @@ class EmbeddedVectorStore:
 
         return results
 
-    def count(self) -> int:
-        return len(self.metadata)
+    def count(self, tutor_id: Optional[str] = None) -> int:
+        if tutor_id is None:
+            return len(self.metadata)
+        return sum(1 for m in self.metadata if m.get("tutor_id") == tutor_id)
 
 
 # Global instances

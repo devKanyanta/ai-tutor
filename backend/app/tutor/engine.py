@@ -13,7 +13,8 @@ from app.tutor.prompts import (
     OUT_OF_BOUNDS_RESPONSE,
     JAILBREAK_REFUSAL_RESPONSE,
     check_jailbreak_attempt,
-    is_simple_greeting
+    is_simple_greeting,
+    tutor_persona_block,
 )
 from app.tutor import lesson
 from app.tutor.memory import memory
@@ -59,11 +60,15 @@ class TutorEngine:
             yield {"type": "done", "message_id": msg_id, "session_id": session_id}
             return
 
-        # 2. Check if knowledge base has documents
-        if vector_store.count() == 0:
+        # 2. Check that the session has a tutor and that tutor has material
+        tutor = memory.get_session_tutor(session_id)
+        tutor_id = tutor["id"] if tutor else None
+        if not tutor or vector_store.count(tutor_id) == 0:
             msg = (
-                "Welcome to the AI Tutor! Your instructor has not yet uploaded curriculum materials. "
-                "Once course documents are uploaded in the Admin panel, I will be ready to guide your learning!"
+                "Please pick an AI tutor to learn with before we start."
+                if not tutor else
+                f"Welcome to {tutor['name']}! Your instructor has not yet uploaded course materials for this tutor. "
+                "Once they are added, I will be ready to guide your learning!"
             )
             for token in msg.split(" "):
                 yield {"type": "token", "content": token + " "}
@@ -156,7 +161,7 @@ class TutorEngine:
             await status_queue.put(message)
 
         prep_task = asyncio.create_task(lesson.prepare_turn(
-            session_id, user_message, retrieval_query, retriever.retrieve, self.client, on_status
+            session_id, user_message, retrieval_query, retriever.for_tutor(tutor_id), self.client, on_status
         ))
         while not prep_task.done():
             try:
@@ -218,6 +223,7 @@ class TutorEngine:
 
         full_prompt = (
             f"{SOCRATIC_TUTOR_SYSTEM_PROMPT}\n\n"
+            f"{tutor_persona_block(tutor)}\n"
             f"[LESSON DIRECTIVE - follow this exactly for this turn]\n{prep.directive}\n[END LESSON DIRECTIVE]\n\n"
             f"[CURRICULUM CONTEXT START]\n{context_text}\n[CURRICULUM CONTEXT END]\n\n"
         )

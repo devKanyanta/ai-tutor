@@ -183,8 +183,14 @@ def test_voice_commit_follows_the_same_checkpoint_rules():
 def test_lesson_state_endpoint_and_reset():
     from fastapi.testclient import TestClient
     from app.main import app
+    from app.core.config import settings
     with TestClient(app) as client:
-        sid = client.post("/api/chat/session/new").json()["session_id"]
+        tid = client.post(
+            "/api/admin/tutors",
+            headers={"Authorization": f"Bearer {settings.ADMIN_TOKEN}"},
+            json={"name": "Lesson Flow Tutor"},
+        ).json()["id"]
+        sid = client.post("/api/chat/session/new", json={"tutor_id": tid}).json()["session_id"]
         state = client.get(f"/api/chat/session/{sid}/state").json()
         assert state["lesson_stage"] == "INIT" and state["phases"] == []
         run(sid, "Teach me about photosynthesis")
@@ -193,3 +199,4 @@ def test_lesson_state_endpoint_and_reset():
         assert state["phases"][0]["status"] == "current"
         reset = client.post(f"/api/chat/session/{sid}/lesson/reset").json()
         assert reset["phases"] == []
+        client.delete(f"/api/admin/tutors/{tid}", headers={"Authorization": f"Bearer {settings.ADMIN_TOKEN}"})

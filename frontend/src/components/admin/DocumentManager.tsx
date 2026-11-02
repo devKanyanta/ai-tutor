@@ -5,12 +5,13 @@ import { api } from '../../services/api';
 
 interface DocumentManagerProps {
   token: string;
+  tutorId: string;
   documents: DocumentItem[];
   onRefresh: () => void;
   loading?: boolean;
 }
 
-export const DocumentManager: React.FC<DocumentManagerProps> = ({ token, documents, onRefresh, loading }) => {
+export const DocumentManager: React.FC<DocumentManagerProps> = ({ token, tutorId, documents, onRefresh, loading }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [updatingDocId, setUpdatingDocId] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -32,10 +33,10 @@ export const DocumentManager: React.FC<DocumentManagerProps> = ({ token, documen
 
     try {
       if (files.length === 1) {
-        const newDoc = await api.uploadDocument(token, files[0]);
+        const newDoc = await api.uploadDocument(token, tutorId, files[0]);
         setUploadSuccess(`Successfully uploaded and indexed "${newDoc.filename}" (${newDoc.chunk_count} chunks)`);
       } else {
-        const batchResult = await api.batchUploadDocuments(token, files);
+        const batchResult = await api.batchUploadDocuments(token, tutorId, files);
         const successCount = batchResult.successful.length;
         const failCount = batchResult.failed.length;
         if (failCount === 0) {

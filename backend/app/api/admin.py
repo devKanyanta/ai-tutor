@@ -4,7 +4,7 @@ import shutil
 import uuid
 from pathlib import Path
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, status
 
 from app.core.config import settings
 from app.core.security import verify_admin_token
@@ -15,7 +15,10 @@ from app.db.models import (
     DocumentResponse,
     DocumentListResponse,
     BatchUploadResponse,
-    MetricsResponse
+    MetricsResponse,
+    TutorCreate,
+    TutorUpdate,
+    TutorResponse,
 )
 from app.ingestion.pipeline import pipeline
 from app.rag.vector_store import vector_store
@@ -37,35 +40,121 @@ async def admin_login(payload: AdminLoginRequest):
         detail="Incorrect admin password"
     )
 
-@router.get("/documents", response_model=DocumentListResponse)
-async def list_documents(authorized: bool = Depends(verify_admin_token)):
-    """List all curriculum documents and their indexing status (REQ-IN-03, REQ-IN-04)."""
+
+def _doc_response(r) -> DocumentResponse:
+    return DocumentResponse(
+        id=r["id"],
+        tutor_id=r["tutor_id"],
+        filename=r["filename"],
+        file_type=r["file_type"],
+        file_size=r["file_size"],
+        chunk_count=r["chunk_count"],
+        status=r["status"],
+        error_message=r["error_message"],
+        created_at=str(r["created_at"]),
+        updated_at=str(r["updated_at"]),
+    )
+
+def _require_tutor(tutor_id: str):
     with get_db() as db:
-        rows = db.execute("SELECT * FROM documents ORDER BY created_at DESC").fetchall()
-        docs = [
-            DocumentResponse(
-                id=r["id"],
-                filename=r["filename"],
-                file_type=r["file_type"],
-                file_size=r["file_size"],
-                chunk_count=r["chunk_count"],
-                status=r["status"],
-                error_message=r["error_message"],
-                created_at=str(r["created_at"]),
-                updated_at=str(r["updated_at"])
+        row = db.execute("SELECT * FROM tutors WHERE id = ?", (tutor_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tutor not found")
+    return row
+
+def _tutor_response(r, db) -> TutorResponse:
+    counts = db.execute(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(status = 'READY'), 0) AS ready FROM documents WHERE tutor_id = ?",
+        (r["id"],),
+    ).fetchone()
+    return TutorResponse(
+        id=r["id"], name=r["name"], subject=r["subject"], description=r["description"],
+        instructions=r["instructions"], document_count=counts["n"], ready_documents=counts["ready"],
+        created_at=str(r["created_at"]),
+    )
+
+@router.get("/tutors", response_model=List[TutorResponse])
+async def list_admin_tutors(authorized: bool = Depends(verify_admin_token)):
+    """All tutors with their private instructions."""
+    with get_db() as db:
+        rows = db.execute("SELECT * FROM tutors ORDER BY created_at DESC, name").fetchall()
+        return [_tutor_response(r, db) for r in rows]
+
+@router.post("/tutors", response_model=TutorResponse, status_code=status.HTTP_201_CREATED)
+async def create_tutor(payload: TutorCreate, authorized: bool = Depends(verify_admin_token)):
+    """Create a specialised tutor with its own, separate curriculum."""
+    tutor_id = str(uuid.uuid4())
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO tutors (id, name, subject, description, instructions) VALUES (?, ?, ?, ?, ?)",
+            (tutor_id, payload.name.strip(), payload.subject.strip(), payload.description.strip(), payload.instructions.strip()),
+        )
+        db.commit()
+        return _tutor_response(db.execute("SELECT * FROM tutors WHERE id = ?", (tutor_id,)).fetchone(), db)
+
+@router.put("/tutors/{tutor_id}", response_model=TutorResponse)
+async def update_tutor(tutor_id: str, payload: TutorUpdate, authorized: bool = Depends(verify_admin_token)):
+    _require_tutor(tutor_id)
+    changes = {k: v.strip() for k, v in payload.model_dump(exclude_none=True).items()}
+    if "name" in changes and not changes["name"]:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Name cannot be empty")
+    with get_db() as db:
+        if changes:
+            assignments = ", ".join(f"{column} = ?" for column in changes)  # column names come from the model, not the client
+            db.execute(
+                f"UPDATE tutors SET {assignments}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (*changes.values(), tutor_id),
             )
-            for r in rows
-        ]
+            db.commit()
+        return _tutor_response(db.execute("SELECT * FROM tutors WHERE id = ?", (tutor_id,)).fetchone(), db)
+
+@router.delete("/tutors/{tutor_id}")
+async def delete_tutor(tutor_id: str, authorized: bool = Depends(verify_admin_token)):
+    """Delete a tutor together with its documents, vectors and student sessions."""
+    tutor = _require_tutor(tutor_id)
+    with get_db() as db:
+        docs = db.execute("SELECT id, file_path FROM documents WHERE tutor_id = ?", (tutor_id,)).fetchall()
+        for doc in docs:
+            try:
+                Path(doc["file_path"]).unlink(missing_ok=True)
+            except OSError:
+                pass
+            vector_store.delete_document(doc["id"])
+            db.execute("DELETE FROM chunks WHERE document_id = ?", (doc["id"],))
+        db.execute("DELETE FROM documents WHERE tutor_id = ?", (tutor_id,))
+        sessions = "SELECT id FROM sessions WHERE tutor_id = ?"
+        db.execute(f"DELETE FROM feedback WHERE session_id IN ({sessions})", (tutor_id,))
+        db.execute(f"DELETE FROM deflections WHERE session_id IN ({sessions})", (tutor_id,))
+        db.execute(f"DELETE FROM messages WHERE session_id IN ({sessions})", (tutor_id,))
+        db.execute("DELETE FROM sessions WHERE tutor_id = ?", (tutor_id,))
+        db.execute("DELETE FROM tutors WHERE id = ?", (tutor_id,))
+        db.commit()
+    return {"status": "success", "message": f"Tutor '{tutor['name']}' and its materials were deleted."}
+
+@router.get("/documents", response_model=DocumentListResponse)
+async def list_documents(
+    tutor_id: str | None = Query(default=None),
+    authorized: bool = Depends(verify_admin_token),
+):
+    """List curriculum documents (optionally just one tutor's) and their indexing status (REQ-IN-03, REQ-IN-04)."""
+    with get_db() as db:
+        if tutor_id:
+            rows = db.execute("SELECT * FROM documents WHERE tutor_id = ? ORDER BY created_at DESC", (tutor_id,)).fetchall()
+        else:
+            rows = db.execute("SELECT * FROM documents ORDER BY created_at DESC").fetchall()
+        docs = [_doc_response(r) for r in rows]
     return DocumentListResponse(documents=docs, total_count=len(docs))
 
 @router.post("/documents/upload", response_model=DocumentResponse)
 async def upload_document(
     file: UploadFile = File(...),
+    tutor_id: str = Form(...),
     authorized: bool = Depends(verify_admin_token)
 ):
     """
     Upload and index curriculum material: PDF, TXT, DOCX, MD, CSV (REQ-IN-01..04).
     """
+    _require_tutor(tutor_id)
     file.filename = _safe_filename(file.filename)
     ext = file.filename.split(".")[-1].lower() if "." in file.filename else ""
     allowed_exts = {"pdf", "txt", "docx", "doc", "md", "markdown", "csv"}
@@ -95,10 +184,10 @@ async def upload_document(
     with get_db() as db:
         db.execute(
             """
-            INSERT INTO documents (id, filename, file_path, file_type, file_size, chunk_count, status)
-            VALUES (?, ?, ?, ?, ?, 0, 'PENDING')
+            INSERT INTO documents (id, tutor_id, filename, file_path, file_type, file_size, chunk_count, status)
+            VALUES (?, ?, ?, ?, ?, ?, 0, 'PENDING')
             """,
-            (doc_id, file.filename, str(save_path), ext, file_size)
+            (doc_id, tutor_id, file.filename, str(save_path), ext, file_size)
         )
         db.commit()
 
@@ -117,27 +206,19 @@ async def upload_document(
 
     with get_db() as db:
         r = db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
-        return DocumentResponse(
-            id=r["id"],
-            filename=r["filename"],
-            file_type=r["file_type"],
-            file_size=r["file_size"],
-            chunk_count=r["chunk_count"],
-            status=r["status"],
-            error_message=r["error_message"],
-            created_at=str(r["created_at"]),
-            updated_at=str(r["updated_at"])
-        )
+        return _doc_response(r)
 
 @router.post("/documents/batch-upload", response_model=BatchUploadResponse)
 async def batch_upload_documents(
     files: List[UploadFile] = File(...),
+    tutor_id: str = Form(...),
     authorized: bool = Depends(verify_admin_token)
 ):
     """
     Batch upload multiple curriculum documents simultaneously.
     Parses and indexes each document, reporting successful and failed items.
     """
+    _require_tutor(tutor_id)
     allowed_exts = {"pdf", "txt", "docx", "doc", "md", "markdown", "csv"}
     successful: List[DocumentResponse] = []
     failed: List[dict] = []
@@ -165,10 +246,10 @@ async def batch_upload_documents(
             with get_db() as db:
                 db.execute(
                     """
-                    INSERT INTO documents (id, filename, file_path, file_type, file_size, chunk_count, status)
-                    VALUES (?, ?, ?, ?, ?, 0, 'PENDING')
+                    INSERT INTO documents (id, tutor_id, filename, file_path, file_type, file_size, chunk_count, status)
+                    VALUES (?, ?, ?, ?, ?, ?, 0, 'PENDING')
                     """,
-                    (doc_id, filename, str(save_path), ext, file_size)
+                    (doc_id, tutor_id, filename, str(save_path), ext, file_size)
                 )
                 db.commit()
 
@@ -182,17 +263,7 @@ async def batch_upload_documents(
 
             with get_db() as db:
                 r = db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
-                successful.append(DocumentResponse(
-                    id=r["id"],
-                    filename=r["filename"],
-                    file_type=r["file_type"],
-                    file_size=r["file_size"],
-                    chunk_count=r["chunk_count"],
-                    status=r["status"],
-                    error_message=r["error_message"],
-                    created_at=str(r["created_at"]),
-                    updated_at=str(r["updated_at"])
-                ))
+                successful.append(_doc_response(r))
         except Exception as e:
             failed.append({
                 "filename": filename,
@@ -272,17 +343,7 @@ async def update_document(
 
     with get_db() as db:
         r = db.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
-        return DocumentResponse(
-            id=r["id"],
-            filename=r["filename"],
-            file_type=r["file_type"],
-            file_size=r["file_size"],
-            chunk_count=r["chunk_count"],
-            status=r["status"],
-            error_message=r["error_message"],
-            created_at=str(r["created_at"]),
-            updated_at=str(r["updated_at"])
-        )
+        return _doc_response(r)
 
 @router.delete("/documents/{doc_id}")
 async def delete_document(doc_id: str, authorized: bool = Depends(verify_admin_token)):
@@ -311,26 +372,35 @@ async def delete_document(doc_id: str, authorized: bool = Depends(verify_admin_t
     return {"status": "success", "message": f"Document '{doc['filename']}' deleted successfully."}
 
 @router.get("/metrics", response_model=MetricsResponse)
-async def get_metrics(authorized: bool = Depends(verify_admin_token)):
+async def get_metrics(tutor_id: str | None = Query(default=None), authorized: bool = Depends(verify_admin_token)):
     """Summary metrics of knowledge base and student interactions (KPIs)."""
+    # Optional per-tutor scope: every figure is restricted to that tutor's documents and sessions.
+    doc_where, ses_where = ("", "")
+    args: tuple = ()
+    if tutor_id:
+        doc_where, ses_where, args = " WHERE tutor_id = ?", " WHERE tutor_id = ?", (tutor_id,)
+    ses_ids = f"(SELECT id FROM sessions{ses_where})"
+    ready_clause = " AND status = 'READY'" if doc_where else " WHERE status = 'READY'"
     with get_db() as db:
-        total_docs = db.execute("SELECT COUNT(*) as c FROM documents").fetchone()["c"]
-        ready_docs = db.execute("SELECT COUNT(*) as c FROM documents WHERE status = 'READY'").fetchone()["c"]
-        total_chunks = db.execute("SELECT COUNT(*) as c FROM chunks").fetchone()["c"]
-        total_sessions = db.execute("SELECT COUNT(*) as c FROM sessions").fetchone()["c"]
-        total_messages = db.execute("SELECT COUNT(*) as c FROM messages").fetchone()["c"]
-        
+        def count(sql: str, params: tuple = ()) -> int:
+            return db.execute(sql, params).fetchone()["c"]
+
+        total_docs = count(f"SELECT COUNT(*) AS c FROM documents{doc_where}", args)
+        ready_docs = count(f"SELECT COUNT(*) AS c FROM documents{doc_where}{ready_clause}", args)
+        total_chunks = count(f"SELECT COUNT(*) AS c FROM chunks WHERE document_id IN (SELECT id FROM documents{doc_where})", args)
+        total_sessions = count(f"SELECT COUNT(*) AS c FROM sessions{ses_where}", args)
+        total_messages = count(f"SELECT COUNT(*) AS c FROM messages WHERE session_id IN {ses_ids}", args)
+
         # KPI-2: Session Engagement (Average turns / messages per session)
         # Only sessions with at least one message count (every page load creates a session).
-        active_sessions = db.execute("SELECT COUNT(DISTINCT session_id) as c FROM messages").fetchone()["c"]
+        active_sessions = count(f"SELECT COUNT(DISTINCT session_id) AS c FROM messages WHERE session_id IN {ses_ids}", args)
         avg_turns = round(float(total_messages) / float(active_sessions), 1) if active_sessions > 0 else 0.0
 
         # KPI-3: Out-of-Bounds Deflection Count
-        deflection_row = db.execute("SELECT COUNT(*) as c FROM deflections").fetchone()
-        deflection_count = deflection_row["c"] if deflection_row else 0
+        deflection_count = count(f"SELECT COUNT(*) AS c FROM deflections WHERE session_id IN {ses_ids}", args)
 
-        pos_feedback = db.execute("SELECT COUNT(*) as c FROM feedback WHERE rating > 0").fetchone()["c"]
-        neg_feedback = db.execute("SELECT COUNT(*) as c FROM feedback WHERE rating < 0").fetchone()["c"]
+        pos_feedback = count(f"SELECT COUNT(*) AS c FROM feedback WHERE rating > 0 AND session_id IN {ses_ids}", args)
+        neg_feedback = count(f"SELECT COUNT(*) AS c FROM feedback WHERE rating < 0 AND session_id IN {ses_ids}", args)
         total_fb = pos_feedback + neg_feedback
         pos_ratio = (pos_feedback / total_fb) if total_fb > 0 else 1.0
 

@@ -10,22 +10,32 @@ class ConversationMemory:
     def __init__(self, max_history_turns: int = 10):
         self.max_history_turns = max_history_turns
 
-    def get_or_create_session(self, session_id: Optional[str] = None) -> str:
-        """Ensure session exists or create a new session ID."""
+    def get_or_create_session(self, session_id: Optional[str] = None, tutor_id: Optional[str] = None) -> str:
+        """Ensure session exists or create a new session ID. A session belongs to one tutor for life."""
         with get_db() as db:
             if session_id:
                 row = db.execute("SELECT id FROM sessions WHERE id = ?", (session_id,)).fetchone()
                 if row:
                     return session_id
                 # Insert with the requested session_id if provided
-                db.execute("INSERT INTO sessions (id, title) VALUES (?, ?)", (session_id, "New Learning Session"))
+                db.execute("INSERT INTO sessions (id, title, tutor_id) VALUES (?, ?, ?)", (session_id, "New Learning Session", tutor_id))
                 db.commit()
                 return session_id
 
             new_id = str(uuid.uuid4())
-            db.execute("INSERT INTO sessions (id, title) VALUES (?, ?)", (new_id, "New Learning Session"))
+            db.execute("INSERT INTO sessions (id, title, tutor_id) VALUES (?, ?, ?)", (new_id, "New Learning Session", tutor_id))
             db.commit()
             return new_id
+
+    def get_session_tutor(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """The tutor this session belongs to (name, subject, instructions), or None if it has none."""
+        with get_db() as db:
+            row = db.execute(
+                """SELECT t.id, t.name, t.subject, t.description, t.instructions
+                   FROM sessions s JOIN tutors t ON t.id = s.tutor_id WHERE s.id = ?""",
+                (session_id,),
+            ).fetchone()
+        return dict(row) if row else None
 
     def add_message(
         self,

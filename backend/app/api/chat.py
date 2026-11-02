@@ -8,19 +8,19 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any, Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from google.genai import types
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.config import settings
 from app.core.security import anonymize_text
 from app.db.database import get_db
-from app.db.models import ChatRequest, FeedbackRequest, FeedbackResponse
+from app.db.models import ChatRequest, FeedbackRequest, FeedbackResponse, NewSessionRequest, TutorResponse
 from app.rag.retriever import retriever
 from app.tutor import lesson
 from app.tutor.engine import tutor_engine
 from app.tutor.memory import memory
-from app.tutor.prompts import SOCRATIC_TUTOR_SYSTEM_PROMPT
+from app.tutor.prompts import SOCRATIC_TUTOR_SYSTEM_PROMPT, tutor_persona_block
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -39,6 +39,16 @@ async def voice_lesson(websocket: WebSocket, session_id: str):
         return
 
     session_id = memory.get_or_create_session(session_id)
+    tutor = memory.get_session_tutor(session_id)
+    if not tutor:
+        await websocket.send_json({
+            "type": "error",
+            "message": "This lesson is not linked to a tutor. Please choose a tutor and start again.",
+        })
+        await websocket.close(code=1011)
+        return
+    tutor_id = tutor["id"]
+    retrieve = retriever.for_tutor(tutor_id)
     recent_messages = memory.get_recent_messages(session_id)[-10:]
     history_context = ""
     if recent_messages:
@@ -54,6 +64,7 @@ async def voice_lesson(websocket: WebSocket, session_id: str):
 
     system_instruction = (
         f"{SOCRATIC_TUTOR_SYSTEM_PROMPT}\n\n"
+        f"{tutor_persona_block(tutor)}\n"
         f"{history_context}"
         "You are in a real-time spoken lesson. Speak naturally and clearly. "
         "LESSON PROTOCOL: after each of your turns the system sends you a private LESSON BRIEFING with your script "
@@ -87,7 +98,7 @@ async def voice_lesson(websocket: WebSocket, session_id: str):
         "tools": [{
             "function_declarations": [{
                 "name": "search_curriculum",
-                "description": "Search the student's uploaded curriculum for context to answer their current course-related turn.",
+                "description": f"Search {tutor['name']}'s course materials for context to answer their current course-related turn.",
                 "parameters": {
                     "type": "OBJECT",
                     "properties": {
@@ -179,7 +190,7 @@ async def voice_lesson(websocket: WebSocket, session_id: str):
             nonlocal prepared
             if prepared and not prepared.done():
                 prepared.cancel()
-            prepared = asyncio.create_task(lesson.next_step_briefing(session_id, retriever.retrieve))
+            prepared = asyncio.create_task(lesson.next_step_briefing(session_id, retrieve))
 
         async def send_briefing() -> None:
             """Give the model the script for its next turn so the lesson stays on plan without relying on tool calls."""
@@ -330,7 +341,7 @@ async def voice_lesson(websocket: WebSocket, session_id: str):
                             await websocket.send_json({"type": "status", "message": message})
 
                         prep = await lesson.prepare_turn(
-                            session_id, student_text, query, retriever.retrieve, tutor_engine.client, send_status
+                            session_id, student_text, query, retrieve, tutor_engine.client, send_status
                         )
                         chunks, in_bounds, directive = prep.chunks, prep.in_bounds, prep.directive
                     else:
@@ -381,7 +392,7 @@ async def voice_lesson(websocket: WebSocket, session_id: str):
             greeting = (
                 "Start the voice lesson with one short, warm spoken sentence. If recent lesson history "
                 "was supplied, acknowledge the topic and invite the student to continue. Otherwise, "
-                "welcome them and invite them to choose a topic from the course materials. Do not teach a concept yet."
+                f"welcome them to {tutor['name']} and invite them to choose a topic from the course materials. Do not teach a concept yet."
             )
             await live_session.send_realtime_input(text=greeting)
             microphone_task = asyncio.create_task(forward_microphone(live_session))
@@ -412,11 +423,46 @@ async def voice_lesson(websocket: WebSocket, session_id: str):
             pass
 
 
+def _tutor_rows(where: str = "", params: tuple = ()) -> list[TutorResponse]:
+    with get_db() as db:
+        rows = db.execute(
+            f"""SELECT t.*,
+                   (SELECT COUNT(*) FROM documents d WHERE d.tutor_id = t.id) AS document_count,
+                   (SELECT COUNT(*) FROM documents d WHERE d.tutor_id = t.id AND d.status = 'READY') AS ready_documents
+                FROM tutors t {where} ORDER BY t.created_at DESC, t.name""",
+            params,
+        ).fetchall()
+    return [
+        TutorResponse(
+            id=r["id"], name=r["name"], subject=r["subject"], description=r["description"],
+            document_count=r["document_count"], ready_documents=r["ready_documents"],
+            created_at=str(r["created_at"]),
+        )
+        for r in rows
+    ]
+
+
+@router.get("/tutors")
+async def list_tutors():
+    """Public catalogue students pick from before starting a lesson. Instructions stay private to instructors."""
+    return {"tutors": _tutor_rows()}
+
+
+@router.get("/tutors/{tutor_id}")
+async def get_tutor(tutor_id: str):
+    found = _tutor_rows("WHERE t.id = ?", (tutor_id,))
+    if not found:
+        raise HTTPException(status_code=404, detail="Tutor not found")
+    return found[0]
+
+
 @router.post("/session/new")
-async def create_new_session():
-    """Create a new chat session (REQ-UI-04)."""
-    session_id = memory.get_or_create_session()
-    return {"session_id": session_id}
+async def create_new_session(payload: NewSessionRequest):
+    """Create a new lesson session with one specific tutor (REQ-UI-04)."""
+    if not _tutor_rows("WHERE t.id = ?", (payload.tutor_id,)):
+        raise HTTPException(status_code=404, detail="Tutor not found")
+    session_id = memory.get_or_create_session(tutor_id=payload.tutor_id)
+    return {"session_id": session_id, "tutor_id": payload.tutor_id}
 
 
 @router.get("/history/{session_id}")

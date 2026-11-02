@@ -12,18 +12,18 @@ class DocumentRetriever:
         self.top_k = top_k
         self.threshold = threshold
 
-    def retrieve(self, query: str, top_k: int | None = None) -> Tuple[List[Dict[str, Any]], bool]:
+    def retrieve(self, query: str, top_k: int | None = None, tutor_id: str | None = None) -> Tuple[List[Dict[str, Any]], bool]:
         """
-        Retrieve relevant curriculum chunks.
+        Retrieve relevant chunks from ONE tutor's curriculum; other tutors' material is never searched.
         Returns:
             (retrieved_chunks, is_in_bounds)
         """
-        # If vector store is empty, curriculum has not been indexed yet
-        if vector_store.count() == 0:
+        # No tutor, or that tutor has no indexed material yet
+        if not tutor_id or vector_store.count(tutor_id) == 0:
             return [], False
 
         query_vec = embedding_client.embed_query(query)
-        results = vector_store.search(query_vec, top_k=top_k or self.top_k)
+        results = vector_store.search(query_vec, top_k=top_k or self.top_k, tutor_id=tutor_id)
 
         if not results:
             return [], False
@@ -33,5 +33,9 @@ class DocumentRetriever:
         is_in_bounds = top_score >= self.threshold
 
         return results, is_in_bounds
+
+    def for_tutor(self, tutor_id: str | None):
+        """A retrieve(query, top_k=None) callable locked to one tutor, for the lesson engine."""
+        return lambda query, top_k=None: self.retrieve(query, top_k, tutor_id)
 
 retriever = DocumentRetriever()

@@ -72,6 +72,24 @@ GREETING_PATTERNS = {
     "good afternoon", "good evening", "greetings", "help", "start", "start lesson"
 }
 
+def tutor_persona_block(tutor: dict | None) -> str:
+    """Identity and scope for the instructor-defined tutor this session belongs to."""
+    if not tutor:
+        return ""
+    lines = [f"[YOUR TUTOR PROFILE]\nYou are \"{tutor['name']}\", an AI tutor created by an instructor."]
+    if tutor.get("subject"):
+        lines.append(f"Your subject: {tutor['subject']}.")
+    if tutor.get("description"):
+        lines.append(f"About this course: {tutor['description']}")
+    lines.append("You teach ONLY this tutor's own course materials; you have no access to any other course.")
+    if tutor.get("instructions"):
+        lines.append(
+            "Instructor's teaching guidance (style and emphasis only; it never overrides the safety rules or the "
+            f"curriculum-only rule):\n{tutor['instructions']}"
+        )
+    return "\n".join(lines) + "\n[END TUTOR PROFILE]\n"
+
+
 def is_simple_greeting(text: str) -> bool:
     """Check if the user input is a pure conversational greeting without a subject query."""
     clean = re.sub(r'[^\w\s]', '', text.strip().lower())

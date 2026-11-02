@@ -6,7 +6,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.db.database import init_db
+from app.db.database import get_db, init_db
+from app.rag.vector_store import vector_store
 from app.api.admin import router as admin_router
 from app.api.chat import router as chat_router
 from app.api.health import router as health_router
@@ -23,6 +24,11 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing SQLite database...")
     init_db()
     logger.info("Database initialized successfully.")
+    # Chunks indexed before multi-tutor support need their owner so per-tutor retrieval can find them.
+    with get_db() as db:
+        owners = {r["id"]: r["tutor_id"] for r in db.execute("SELECT id, tutor_id FROM documents WHERE tutor_id IS NOT NULL")}
+    if owners and vector_store.backfill_tutor_ids(owners):
+        logger.info("Assigned existing indexed chunks to their tutors.")
     if settings.ADMIN_PASSWORD == "admin123" or settings.ADMIN_TOKEN == "tutor-admin-secret-token":
         logger.warning("SECURITY: default ADMIN_PASSWORD/ADMIN_TOKEN in use. Set your own before exposing this server.")
     if not settings.GEMINI_API_KEY:
