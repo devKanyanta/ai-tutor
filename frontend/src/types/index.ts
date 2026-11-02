@@ -106,6 +106,8 @@ export interface CourseState {
 }
 
 export interface LessonState {
+  /** Set while the student is on a break or has ended the lesson; the lesson picks up where it stopped. */
+  paused?: '' | 'break' | 'ended';
   /** The student's position in the tutor's course; null when the tutor has no lessons. */
   course?: CourseState | null;
   lesson_stage: string;   // INIT | WARMUP | LEARN | PRACTICE | RECAP | DONE

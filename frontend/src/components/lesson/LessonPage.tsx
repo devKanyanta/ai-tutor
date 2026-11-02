@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeftRight, Mic, MicOff, RotateCcw, Send, WifiOff, AlertCircle, Loader2 } from 'lucide-react';
+import { ArrowLeftRight, Coffee, Mic, MicOff, Play, RotateCcw, Square, Send, WifiOff, AlertCircle, Loader2 } from 'lucide-react';
 import { Logo } from '../Logo';
 import { Link } from '../../router';
 import { LessonProgress } from './LessonProgress';
@@ -385,6 +385,12 @@ export const LessonPage: React.FC<{ tutorId: string }> = ({ tutorId }) => {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => void ask('Let’s take a break')} disabled={!sessionId || isLoading || !!lesson.paused || lesson.lesson_stage === 'INIT'} className="btn btn-ghost !px-3 !py-2 text-xs" title="Pause the lesson; say “I’m back” when you want to continue">
+            <Coffee className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Take a break</span>
+          </button>
+          <button onClick={() => void ask('I want to end the lesson')} disabled={!sessionId || isLoading || lesson.paused === 'ended' || lesson.lesson_stage === 'INIT'} className="btn btn-ghost !px-3 !py-2 text-xs" title="Stop for now; your place is saved">
+            <Square className="h-3.5 w-3.5" /> <span className="hidden sm:inline">End lesson</span>
+          </button>
           <button onClick={restartLesson} disabled={isVoiceActive || isLoading} className="btn btn-ghost !px-3 !py-2 text-xs" title="Restart the current lesson">
             <RotateCcw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Restart lesson</span>
           </button>
@@ -392,6 +398,19 @@ export const LessonPage: React.FC<{ tutorId: string }> = ({ tutorId }) => {
         </div>
       </header>
       <div className="border-b border-ink-200 bg-surface px-4 py-1.5 md:hidden"><LessonProgress lesson={lesson} busy={isLoading || isVoiceActive} onNewTopic={() => void startNewTopic()} /></div>
+
+      {lesson.paused && (
+        <div role="status" className="flex items-center justify-between gap-3 border-b border-board-200 bg-board-50 px-4 py-2 text-sm text-board-800">
+          <span>
+            {lesson.paused === 'break'
+              ? 'You’re on a break. Say “I’m back” or press Resume whenever you’re ready.'
+              : 'Lesson ended for now. Your place is saved; you can pick up exactly here any time.'}
+          </span>
+          <button onClick={() => void ask('I’m back, let’s continue')} disabled={isLoading} className="btn btn-primary !py-1.5 text-xs">
+            <Play className="h-3.5 w-3.5" /> Resume lesson
+          </button>
+        </div>
+      )}
 
       {initError && (
         <div role="alert" className="flex items-center justify-between gap-3 border-b border-mark-400/50 bg-mark-300/30 px-4 py-2 text-sm text-ink-800">

@@ -101,6 +101,15 @@ def test_lessons_start_automatically_and_progress_is_saved_per_student():
             resumed = asyncio.run(lesson.open_session(sid, retrieve, None))
             assert resumed.mode == "resume" and "WELCOME BACK" in resumed.directive
 
+            # Ending the lesson keeps the place; reconnecting later resumes it instead of restarting.
+            tutor_reply_msg = memory.add_message(sid, "assistant", "ok")
+            ended = asyncio.run(lesson.prepare_turn(sid, "I want to end the lesson", "end", retrieve, None))
+            assert ended.mode == "end" and lesson.load_state(sid).paused == 2
+            progress_now = client.get(f"/api/chat/tutors/{tutor}/course").json()
+            assert progress_now["completed"] == 0
+            back = asyncio.run(lesson.open_session(sid, retrieve, None))
+            assert back.mode == "resume" and lesson.load_state(sid).paused == 0
+
             # Finish the lesson (confirming every checkpoint).
             for _ in range(40):
                 if lesson.load_state(sid).done:

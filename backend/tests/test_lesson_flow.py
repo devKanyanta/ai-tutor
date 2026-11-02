@@ -202,3 +202,72 @@ def test_lesson_state_endpoint_and_reset():
         reset = client.post(f"/api/chat/session/{sid}/lesson/reset").json()
         assert reset["phases"] == []
         client.delete(f"/api/admin/tutors/{tid}", headers={"Authorization": f"Bearer {settings.ADMIN_TOKEN}"})
+
+
+# --------------------------------------------------------------------------- ending and breaks
+def test_end_and_break_phrases_are_recognised_but_not_over_matched():
+    for text in ("I want to end the lesson", "let's stop for now", "I'm done", "that's all for today", "stop the lesson please"):
+        assert lesson.wants_end(text), text
+    for text in ("let's take a break", "I need a quick break", "give me a minute", "can we pause", "brb"):
+        assert lesson.wants_break(text), text
+    for text in (
+        "I'm done with this question, is it 42?",
+        "what happens at the end of the lesson plan in chapter two",
+        "the thread will pause until the lock is released and then it continues to run",
+    ):
+        assert not lesson.wants_end(text) and not lesson.wants_break(text), text
+    assert lesson.wants_back("ok I'm back") and lesson.wants_back("ready to continue")
+    assert not lesson.wants_back("let's take a break")
+
+
+def test_a_break_freezes_the_lesson_until_the_student_is_back():
+    sid = new_lesson()
+    before = lesson.load_state(sid)
+    tutor_reply(sid)
+    prep = run(sid, "I need a break")
+    assert prep.mode == "break" and "BREAK" in prep.directive and "Do NOT teach" in prep.directive
+    paused = lesson.load_state(sid)
+    assert paused.paused == 1 and paused.beat == before.beat   # nothing advanced
+    assert lesson.public_state(sid)["paused"] == "break"
+    assert lesson.commit_turn(sid, "mm") .beat == before.beat    # voice commit does not advance a paused lesson
+
+    # Small talk while away does not restart anything.
+    tutor_reply(sid)
+    assert "STILL ON A BREAK" in run(sid, "ok thanks").directive
+    assert lesson.load_state(sid).paused == 1
+
+    tutor_reply(sid)
+    back = run(sid, "I'm back, let's continue")
+    assert back.mode == "resume" and "WELCOME BACK" in back.directive
+    state = lesson.load_state(sid)
+    assert state.paused == 0 and state.beat == before.beat
+    assert lesson.public_state(sid)["paused"] == ""
+
+
+def test_ending_a_lesson_keeps_the_place_and_does_not_complete_it():
+    sid = new_lesson()
+    tutor_reply(sid)
+    say(sid, "yes ready")
+    place = lesson.load_state(sid).beat
+    tutor_reply(sid)
+    prep = run(sid, "I want to end the lesson")
+    assert prep.mode == "end" and "END OF LESSON" in prep.directive and "progress is saved" in prep.directive
+    state = lesson.load_state(sid)
+    assert state.paused == 2 and state.beat == place and not state.done
+    assert lesson.public_state(sid)["paused"] == "ended" and not lesson.public_state(sid)["complete"]
+
+    # Saying they are back picks up exactly where they stopped.
+    tutor_reply(sid)
+    back = run(sid, "I'm ready to continue")
+    assert back.mode == "resume" and "WELCOME BACK" in back.directive
+    assert lesson.load_state(sid).paused == 0 and lesson.load_state(sid).beat == place
+
+
+def test_asking_a_real_question_while_on_a_break_resumes_normally():
+    sid = new_lesson()
+    tutor_reply(sid)
+    run(sid, "give me a minute")
+    tutor_reply(sid)
+    prep = run(sid, "wait, why does the light matter for this?")
+    assert prep.mode == "side_question"
+    assert lesson.load_state(sid).paused == 0

@@ -146,6 +146,7 @@ def init_db():
         "lesson_holds INTEGER DEFAULT 0",
         "lesson_marker INTEGER DEFAULT -1",
         "lesson_gate INTEGER DEFAULT 0",
+        "lesson_paused INTEGER DEFAULT 0",  # 0 running, 1 on a break, 2 ended by the student (resumable)
     ):
         try:
             cursor.execute(f"ALTER TABLE sessions ADD COLUMN {column}")

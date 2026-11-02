@@ -166,6 +166,7 @@ class LessonState:
     holds: int = 0
     marker: int = -1  # assistant-message count when we last advanced (guards against double-advance)
     gate: bool = False  # phase checkpoint: waiting for the student to agree to move to the next phase
+    paused: int = 0               # 0 running, 1 student is on a break, 2 student ended the lesson (resumable)
     in_course: bool = False       # this lesson is part of the tutor's course outline (so progress is tracked)
     next_title: str = ""          # title of the following course lesson, if any
 
@@ -189,7 +190,7 @@ class LessonState:
 def load_state(session_id: str) -> LessonState:
     with get_db() as db:
         row = db.execute(
-            "SELECT lesson_plan, lesson_beat, lesson_holds, lesson_marker, lesson_gate FROM sessions WHERE id = ?",
+            "SELECT lesson_plan, lesson_beat, lesson_holds, lesson_marker, lesson_gate, lesson_paused FROM sessions WHERE id = ?",
             (session_id,),
         ).fetchone()
     if not row or not row["lesson_plan"]:
@@ -206,6 +207,7 @@ def load_state(session_id: str) -> LessonState:
         holds=row["lesson_holds"] or 0,
         marker=row["lesson_marker"] if row["lesson_marker"] is not None else -1,
         gate=bool(row["lesson_gate"]),
+        paused=row["lesson_paused"] or 0,
         in_course=bool(current),
         next_title=(info["next"]["title"] if info and info["next"] else "") if current else "",
     )
@@ -214,7 +216,7 @@ def load_state(session_id: str) -> LessonState:
 def save_state(session_id: str, state: LessonState) -> None:
     with get_db() as db:
         db.execute(
-            """UPDATE sessions SET lesson_plan = ?, lesson_beat = ?, lesson_holds = ?, lesson_marker = ?, lesson_gate = ?,
+            """UPDATE sessions SET lesson_plan = ?, lesson_beat = ?, lesson_holds = ?, lesson_marker = ?, lesson_gate = ?, lesson_paused = ?,
                lesson_stage = ?, current_topic = ?, last_active = CURRENT_TIMESTAMP WHERE id = ?""",
             (
                 json.dumps(state.plan) if state.plan else None,
@@ -222,6 +224,7 @@ def save_state(session_id: str, state: LessonState) -> None:
                 state.holds,
                 state.marker,
                 int(state.gate),
+                state.paused,
                 state.stage,
                 state.plan["topic"] if state.plan else None,
                 session_id,
@@ -256,8 +259,39 @@ _HOLD = (
 )
 
 
+# The student can end the lesson or take a break at any point, just by saying so. Only short utterances count,
+# so a sentence that merely mentions "pause" or "stop" while answering a question is never mistaken for a request.
+_END = re.compile(
+    r"(?<!the )(?<!of )\b(end|stop|finish|quit|leave|close)\b.{0,20}\b(lesson|session|class|here|today|now|for now)\b"
+    r"|\b(i'?m|im|i am|we'?re|were|we are) (done|finished)( (for|with) (today|now|the lesson|this lesson|the session|this session))?$"
+    r"|\bthat'?s (all|enough)( for (today|now))?$|\bi want to (stop|end|quit|leave)\b"
+    r"|\blet'?s (stop|end|finish)\b|\bno more (for|today)\b|\bcall it a day\b"
+)
+_BREAK = re.compile(
+    r"\b(take|need|want|have|get|grab) (a|an) (short |quick |little |small )?(break|breather|rest|pause)\b"
+    r"|\blet'?s (take a )?(pause|break)\b|\bpause (the )?(lesson|session|class)?\b|\bgive me (a|one) (minute|moment|second|sec)\b"
+    r"|\bbe right back\b|\bbrb\b|\bone moment\b|\bhang on a (minute|moment|second)\b|\bbreak time\b"
+)
+_BACK = re.compile(r"\b(back|resume|continue|carry on|ready|let'?s go|go on|go ahead|start again|pick up)\b")
+
+
+def wants_end(text: str) -> bool:
+    t = _norm(text)
+    return len(t.split()) <= 12 and not t.startswith(("what", "when", "how", "why", "where", "which", "who")) and bool(_END.search(t))
+
+
+def wants_break(text: str) -> bool:
+    t = _norm(text)
+    words = t.split()
+    return (len(words) <= 12 and bool(_BREAK.search(t))) or (len(words) <= 5 and "pause" in words)
+
+
+def wants_back(text: str) -> bool:
+    return bool(_BACK.search(_norm(text))) and not wants_break(text) and not wants_end(text)
+
+
 def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^\w\s'?]", " ", text.lower())).strip()
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s'?]", " ", text.lower().replace("\u2019", "'"))).strip()
 
 
 def is_acknowledgement(text: str) -> bool:
@@ -322,8 +356,12 @@ def awaiting_confirmation(state: LessonState) -> bool:
 
 
 def classify_turn(state: LessonState, text: str) -> str:
-    """new_lesson | continue | side_question | closing"""
+    """new_lesson | continue | side_question | closing | end | break"""
     t = _norm(text)
+    if wants_end(text):
+        return "end"
+    if wants_break(text):
+        return "break"
     if not state.plan:
         return "new_lesson"
     if any(p in t for p in _SWITCH):
@@ -364,6 +402,19 @@ def focus_text(state: LessonState) -> str:
     if stage == "PRACTICE":
         return plan["practice"][idx]["task"]
     return " ".join(plan["takeaways"])
+
+
+# How the tutor responds to the student's answer to its previous question. Used by every phase so a wrong answer
+# is always explained and corrected, never just acknowledged and moved past.
+FEEDBACK_RULE = (
+    "FIRST, respond to the student's answer to your previous question. Say plainly whether it was right, partly "
+    "right or wrong. If it was right, say in one sentence why it works. If it was partly right or wrong, never gloss "
+    "over it: explain WHY it does not hold (name the likely misunderstanding kindly), then state the correct answer "
+    "and the reasoning behind it in 2 to 4 sentences, using only the curriculum context. Never pretend a wrong "
+    "answer was right and never leave out the correct answer. This feedback may make the turn longer than usual; "
+    "that is fine. If you corrected them, mention in a sentence that they can ask you to go over it again. "
+    "THEN continue with the step below. "
+)
 
 
 def build_directive(state: LessonState, mode: str = "continue", hold: bool = False, ack: bool = False) -> str:
@@ -413,8 +464,7 @@ def build_directive(state: LessonState, mode: str = "continue", hold: bool = Fal
                 "The student only acknowledged (something like 'yes' or 'ok') and did not answer anything, so do NOT "
                 "praise, critique or comment on their reply; just carry on. "
                 if ack else
-                "If the student just replied to your previous question, react to it in one short phrase "
-                "(confirm what is right, gently fix what is not) before teaching. "
+                (FEEDBACK_RULE if idx > 0 else "")
             ) +
             "Teach ONLY this point, in 3 to 5 spoken sentences, with one concrete example from the curriculum context. "
             f"End with a quick check question like: {item['check']} "
@@ -425,22 +475,22 @@ def build_directive(state: LessonState, mode: str = "continue", hold: bool = Fal
         if ack:
             lead = "The student only acknowledged and did not answer anything, so give no feedback; just "
         elif idx == 0:
-            lead = "Give brief, specific feedback on the student's last answer (what is right, what to fix and why), then "
+            lead = FEEDBACK_RULE
         else:
-            lead = "Give specific feedback on the student's attempt at the previous task (what is right, what to fix and why), then "
+            lead = FEEDBACK_RULE.replace("answer to your previous question", "attempt at the previous task")
         body = (
             f"PHASE 3 of 4 - PRACTICE, task {idx + 1} of {n_practice}. "
             + ("Begin with a short spoken bridge from learning into practice (for example 'Now let's try it yourself'). " if idx == 0 else "")
             + f"{lead}"
-            f"set this task: {item['task']} "
+            f"Then set this task: {item['task']} "
             + (f"If they ask for help, you may give this hint: {item['hint']} " if item["hint"] else "")
-            + "Ask them to try it. Do NOT give the answer."
+            + "Ask them to try it. Do NOT give away the answer to this NEW task before they have attempted it."
         )
     else:  # RECAP
         suggestion = f" Suggest what to study next: {plan['next_up']}." if plan["next_up"] else ""
         body = (
             "PHASE 4 of 4 - RECAP. Begin with a short spoken bridge (for example 'Let's pull it together'). "
-            + ("Give no feedback (the student only acknowledged); " if ack else "Give specific feedback on the student's last attempt, then ")
+            + ("Give no feedback (the student only acknowledged); " if ack else FEEDBACK_RULE.replace("answer to your previous question", "last attempt"))
             + "summarise the key "
             f"takeaways in clear spoken sentences: {' | '.join(plan['takeaways'])}. "
             + (
@@ -459,7 +509,8 @@ def build_directive(state: LessonState, mode: str = "continue", hold: bool = Fal
         body = (
             f"PHASE CHECKPOINT. The {STAGE_LABELS[stage]} phase is finished and the student has not yet agreed to "
             f"move on. Respond to what the student just said (if it was a question, answer it briefly from the "
-            f"curriculum context; otherwise give brief, specific feedback), say in one sentence what this phase "
+            f"curriculum context; otherwise say plainly whether their answer was right, and if it was wrong or partly "
+            f"wrong explain why and give the correct answer with its reasoning), say in one sentence what this phase "
             f"covered, then ask clearly whether they are ready to move on to {nxt} or would like to go over "
             f"anything first. Do NOT start {nxt} yet. Ask only that one question."
         )
@@ -489,7 +540,7 @@ def public_state(session_id: str) -> Dict[str, Any]:
     if not state.plan:
         return {"lesson_stage": "INIT", "current_topic": "", "student_turns": student_turns,
                 "complete": False, "objective": "", "phases": [], "beat": 0, "total_beats": 0,
-                "awaiting_confirmation": "", "course": course_state(session_id)}
+                "awaiting_confirmation": "", "paused": "", "course": course_state(session_id)}
 
     beats, plan = state.beats, state.plan
     items = {
@@ -521,6 +572,7 @@ def public_state(session_id: str) -> Dict[str, Any]:
         "beat": min(state.beat, len(beats)),
         "total_beats": len(beats),
         "awaiting_confirmation": next_phase_label(state) if awaiting_confirmation(state) else "",
+        "paused": ("", "break", "ended")[state.paused],
         "course": course_state(session_id),
     }
 
@@ -580,7 +632,7 @@ def commit_turn(session_id: str, student_text: str) -> LessonState:
     Only plain continuations advance; new topics and side questions are handled by the lookup tool.
     """
     state = load_state(session_id)
-    if not state.plan or state.done:
+    if not state.plan or state.done or state.paused:
         return state
     if classify_turn(state, student_text) != "continue":
         return state
@@ -603,6 +655,15 @@ async def next_step_briefing(session_id: str, retrieve: Retrieve) -> Optional[st
     state = load_state(session_id)
     if not state.plan:
         return None
+    if state.paused:
+        what = "on a break" if state.paused == 1 else "ended the lesson for now"
+        return (
+            "[LESSON BRIEFING - private instructions from the system, not from the student. Never read it aloud or "
+            "mention it. It is your script for your NEXT reply only.]\n"
+            f"The student has {what}. Do not teach, quiz or move the lesson on. If they say they are back or ready to "
+            "continue, call search_curriculum (it will give you the way to pick up where you left off). If they only say "
+            "thanks or goodbye, reply with one short, kind sentence. If they ask something else, call search_curriculum."
+        )
     head = (
         "[LESSON BRIEFING - private instructions from the system, not from the student. Never read it aloud or "
         "mention it. It is your script for your NEXT reply only.]\n"
@@ -703,6 +764,32 @@ async def prepare_turn(
     state = load_state(session_id)
     mode = classify_turn(state, user_message)
 
+    if mode == "end":
+        if state.plan and not state.done:
+            state.paused = 2           # keep the plan and place so the student can pick up exactly here later
+            save_state(session_id, state)
+        return TurnPrep(chunks=[], in_bounds=True, directive=end_directive(state), mode=mode)
+
+    if mode == "break":
+        if state.plan and not state.done:
+            state.paused = 1
+            save_state(session_id, state)
+        return TurnPrep(chunks=[], in_bounds=True, directive=break_directive(state), mode=mode)
+
+    if state.paused:
+        if wants_back(user_message):
+            state.paused = 0
+            save_state(session_id, state)
+            focus = focus_text(state)
+            chunks = (await asyncio.to_thread(retrieve, focus[:600]))[0] if focus else []
+            name = _first_name((course.session_info(session_id) or {}).get("user_name"))
+            return TurnPrep(chunks=chunks, in_bounds=True, directive=resume_directive(state, name), mode="resume")
+        if is_acknowledgement(user_message) or len(_norm(user_message).split()) <= 3:
+            return TurnPrep(chunks=[], in_bounds=True, directive=break_directive(state, waiting=True), mode="break")
+        state.paused = 0               # they asked or said something real: carry on with it
+        save_state(session_id, state)
+        mode = classify_turn(state, user_message)
+
     # Finished a course lesson and the student is ready: go straight to the next one.
     if mode == "closing" and state.done and state.in_course:
         info = course.session_info(session_id)
@@ -748,6 +835,35 @@ async def prepare_turn(
 # --------------------------------------------------------------------------- course lessons
 def _first_name(name: Optional[str]) -> str:
     return (name or "").strip().split(" ")[0]
+
+
+def _where(state: LessonState) -> str:
+    if not state.plan:
+        return ""
+    return f"the lesson \"{state.plan['topic']}\", {STAGE_LABELS.get(state.stage, state.stage.title())} phase"
+
+
+def break_directive(state: LessonState, waiting: bool = False) -> str:
+    where = f" Where you are: {_where(state)}." if state.plan and not state.done else ""
+    if waiting:
+        return (
+            "THE STUDENT IS STILL ON A BREAK. Reply with one short, relaxed sentence (for example 'No rush, I'm here "
+            f"when you're ready'). Do not teach, quiz or ask a question.{where}"
+        )
+    return (
+        "BREAK. The student asked for a break. Reply in one or two warm sentences: of course, take as long as they "
+        "need, and when they are back they only need to say so and you will pick up right where you left off."
+        f"{where} Do NOT teach, quiz, summarise or ask a question this turn."
+    )
+
+
+def end_directive(state: LessonState) -> str:
+    where = f" You covered up to {_where(state)}." if state.plan and not state.done else ""
+    return (
+        "END OF LESSON. The student wants to stop for now. Do not try to talk them out of it and do not ask any "
+        f"question. In two or three warm sentences: thank them, say briefly what they worked on.{where} Reassure them "
+        "their progress is saved and they can come back any time and carry on from this exact point, then say goodbye."
+    )
 
 
 def resume_question(state: LessonState) -> str:
@@ -830,6 +946,9 @@ async def open_session(
     state = load_state(session_id)
 
     if state.plan and not state.done:
+        if state.paused:               # coming back after a break or an ended lesson: pick up where they left off
+            state.paused = 0
+            save_state(session_id, state)
         focus = focus_text(state)
         chunks, _ = await asyncio.to_thread(retrieve, focus[:600]) if focus else ([], False)
         return TurnPrep(chunks=chunks, in_bounds=True, directive=resume_directive(state, _first_name(info["user_name"])), mode="resume")
