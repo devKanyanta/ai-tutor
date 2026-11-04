@@ -273,7 +273,7 @@ class TutorEngine:
                         contents=full_prompt,
                         config=types.GenerateContentConfig(
                             temperature=0.3,
-                            max_output_tokens=1000,
+                            max_output_tokens=2500,
                         )
                     )
                     async for chunk in response:

@@ -74,25 +74,31 @@ def outline(tutor_id: str, user_id: Optional[str] = None) -> List[Dict[str, Any]
     sync_outline(tutor_id)
     with get_db() as db:
         rows = db.execute("SELECT id, position, title FROM course_lessons WHERE tutor_id = ? ORDER BY position", (tutor_id,)).fetchall()
-        status = {}
+        status, percent = {}, {}
         if user_id:
-            status = {
-                r["lesson_id"]: r["status"]
-                for r in db.execute(
-                    "SELECT lesson_id, status FROM lesson_progress WHERE user_id = ? AND lesson_id IN "
-                    "(SELECT id FROM course_lessons WHERE tutor_id = ?)",
-                    (user_id, tutor_id),
-                )
-            }
+            for r in db.execute(
+                "SELECT lesson_id, status, percent FROM lesson_progress WHERE user_id = ? AND lesson_id IN "
+                "(SELECT id FROM course_lessons WHERE tutor_id = ?)",
+                (user_id, tutor_id),
+            ):
+                status[r["lesson_id"]] = r["status"]
+                percent[r["lesson_id"]] = 100 if r["status"] == "completed" else r["percent"]
     return [
-        {"id": r["id"], "position": r["position"], "title": r["title"], "status": status.get(r["id"], "not_started")}
+        {"id": r["id"], "position": r["position"], "title": r["title"],
+         "status": status.get(r["id"], "not_started"), "percent": percent.get(r["id"], 0)}
         for r in rows
     ]
 
 
+def overall_percent(lessons: List[Dict[str, Any]]) -> int:
+    """Course progress counting partly finished lessons: the average of every lesson's own percentage."""
+    return round(sum(l.get("percent", 0) for l in lessons) / len(lessons)) if lessons else 0
+
+
 def summary(tutor_id: str, user_id: str) -> Dict[str, int]:
     lessons = outline(tutor_id, user_id)
-    return {"total": len(lessons), "completed": sum(1 for l in lessons if l["status"] == "completed")}
+    return {"total": len(lessons), "completed": sum(1 for l in lessons if l["status"] == "completed"),
+            "percent": overall_percent(lessons)}
 
 
 def next_lesson(tutor_id: str, user_id: str, after_position: int = 0) -> Optional[Dict[str, Any]]:
@@ -124,8 +130,8 @@ def _set_status(user_id: str, lesson_id: str, status: str) -> None:
     with get_db() as db:
         if status == "completed":
             db.execute(
-                "INSERT INTO lesson_progress (user_id, lesson_id, status, completed_at) VALUES (?, ?, 'completed', CURRENT_TIMESTAMP) "
-                "ON CONFLICT (user_id, lesson_id) DO UPDATE SET status = 'completed', "
+                "INSERT INTO lesson_progress (user_id, lesson_id, status, percent, completed_at) VALUES (?, ?, 'completed', 100, CURRENT_TIMESTAMP) "
+                "ON CONFLICT (user_id, lesson_id) DO UPDATE SET status = 'completed', percent = 100, "
                 "completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP",
                 (user_id, lesson_id),
             )
@@ -159,6 +165,21 @@ def set_session_lesson(session_id: str, lesson_id: Optional[str]) -> None:
         _set_status(info["user_id"], lesson_id, "in_progress")
 
 
+def record_percent(session_id: str, percent: int) -> None:
+    """Save how far through its lesson plan the student is, as they go (not only when the lesson ends)."""
+    info = session_info(session_id)
+    if not info or not info["user_id"] or not info["course_lesson_id"]:
+        return
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO lesson_progress (user_id, lesson_id, status, percent) VALUES (?, ?, 'in_progress', ?) "
+            "ON CONFLICT (user_id, lesson_id) DO UPDATE SET percent = excluded.percent, updated_at = CURRENT_TIMESTAMP "
+            "WHERE status != 'completed'",
+            (info["user_id"], info["course_lesson_id"], max(0, min(99, percent))),
+        )
+        db.commit()
+
+
 def mark_session_lesson_complete(session_id: str) -> None:
     info = session_info(session_id)
     if info and info["user_id"] and info["course_lesson_id"]:
@@ -180,6 +201,7 @@ def session_course(session_id: str) -> Optional[Dict[str, Any]]:
     return {
         "total": len(lessons),
         "completed": sum(1 for l in lessons if l["status"] == "completed"),
+        "percent": overall_percent(lessons),
         "current": current,
         "next": following,
         "lessons": lessons,

@@ -271,3 +271,46 @@ def test_asking_a_real_question_while_on_a_break_resumes_normally():
     prep = run(sid, "wait, why does the light matter for this?")
     assert prep.mode == "side_question"
     assert lesson.load_state(sid).paused == 0
+
+
+def test_every_excerpt_is_taught_by_some_point():
+    chunks = [{"filename": "n.txt", "chunk_index": i, "content": f"Fact number {i} about rivers."} for i in range(6)]
+    plan = lesson.normalize_plan(lesson.LessonPlan(
+        topic="Rivers", objective="o", hook="h", roadmap=["a"], takeaways=["t"], practice=[],
+        learn=[lesson.LearnItem(point="Source", sections=[1]), lesson.LearnItem(point="Flow", sections=[2, 5])],  # 3, 4, 6 unassigned
+    ), chunks)
+    taught = sorted(s["chunk_index"] for item in plan["learn"] for s in item["sources"])
+    assert taught == [0, 1, 2, 3, 4, 5]
+
+    state = lesson.LessonState(plan=plan, beat=1)  # first learn point
+    context = lesson.beat_context(state, [{"filename": "x", "chunk_index": 99, "content": "other"}])
+    assert [c["chunk_index"] for c in context[:len(plan["learn"][0]["sources"])]] == [s["chunk_index"] for s in plan["learn"][0]["sources"]]
+    assert "slowly and in detail" in lesson.build_directive(state)
+
+
+def test_fallback_plan_covers_each_excerpt_and_lessons_can_have_many_points():
+    chunks = [{"filename": "n.txt", "chunk_index": i, "content": f"This is a reasonably long sentence number {i} about volcanoes."} for i in range(9)]
+    plan = lesson.fallback_plan("Volcanoes", chunks)
+    assert len(plan["learn"]) == 9
+    assert sorted(s["chunk_index"] for it in plan["learn"] for s in it["sources"]) == list(range(9))
+
+
+def test_document_metadata_is_not_taught():
+    chunks = [
+        {"filename": "n.txt", "chunk_index": 0, "content": "University of Lusaka\nDepartment of Biology\nCourse: BIO 101 Introduction to Biology\nLecturer: Dr A. Phiri\nPage 1 of 40"},
+        {"filename": "n.txt", "chunk_index": 1, "content": "Cells are the basic units of life.\nPage 2 of 40\nAll cells have a membrane."},
+    ]
+    plan = lesson.normalize_plan(lesson.LessonPlan(
+        topic="Cells", objective="o", hook="h", roadmap=["a"], takeaways=["t"], practice=[],
+        learn=[lesson.LearnItem(point="Cells", sections=[2])], skipped_sections=[1],
+    ), chunks)
+    text = " ".join(s["content"] for it in plan["learn"] for s in it["sources"])
+    assert "University" not in text and "Lecturer" not in text and "Page 2" not in text
+    assert "basic units of life" in text and "membrane" in text
+    # Even if the planner forgot to skip the title page, it is not forced onto a point.
+    plan = lesson.normalize_plan(lesson.LessonPlan(
+        topic="Cells", objective="o", hook="h", roadmap=["a"], takeaways=["t"], practice=[],
+        learn=[lesson.LearnItem(point="Cells", sections=[2])],
+    ), chunks)
+    assert [s["chunk_index"] for it in plan["learn"] for s in it["sources"]] == [1]
+    assert "never mention or ask about the document itself" in lesson.build_directive(lesson.LessonState(plan=plan, beat=1))

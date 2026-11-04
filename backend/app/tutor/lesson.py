@@ -31,8 +31,9 @@ MAX_HOLDS = 2  # re-explain at most this many times before moving on
 
 # --------------------------------------------------------------------------- plan model
 class LearnItem(BaseModel):
-    point: str = Field(description="The single idea to teach, at most 25 words")
+    point: str = Field(description="The single idea to teach, with the key details the tutor must cover, at most 60 words")
     check: str = Field(default="", description="A quick question to ask after teaching it")
+    sections: List[int] = Field(default_factory=list, description="Numbers of the excerpts that contain this point")
 
 
 class PracticeItem(BaseModel):
@@ -44,10 +45,11 @@ class LessonPlan(BaseModel):
     topic: str = Field(description="Short lesson title, at most 8 words")
     objective: str = Field(description="One sentence: what the student will be able to do")
     hook: str = Field(description="A real-world scenario or intriguing question to open with")
-    roadmap: List[str] = Field(description="2-3 short phrases: what the lesson will cover")
+    roadmap: List[str] = Field(description="Short phrases: what the lesson will cover, in order")
     learn: List[LearnItem]
     practice: List[PracticeItem]
-    takeaways: List[str] = Field(description="2-3 key points for the recap")
+    takeaways: List[str] = Field(description="Key points for the recap")
+    skipped_sections: List[int] = Field(default_factory=list, description="Numbers of excerpts with no subject matter to teach (title page, institution or course name, contents, page headers, references)")
     next_up: str = Field(default="", description="A related topic to study next, if any")
 
 
@@ -55,20 +57,76 @@ def _clean(text: Any, limit: int = 300) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()[:limit]
 
 
-def normalize_plan(plan: LessonPlan) -> Dict[str, Any]:
+# Front matter and page furniture of a document (who published it, which course, page numbers) is not subject matter.
+_META_LINE = re.compile(
+    r"(^\s*(course|module|unit|subject|lecturer|instructor|professor|author|date|semester|year)\s*[:\-]|universit|college|school of|faculty of|department of|institute of|academy|lecturer|instructor|professor|prof\.|"
+    r"course (code|title|name|outline|unit)|module (code|title)|unit code|semester|academic year|©|copyright|all rights reserved|"
+    r"\bpage \d+|\b\d+ of \d+\b|table of contents|^contents$|prepared by|compiled by|lecture notes? (for|on)|"
+    r"course notes|isbn|www\.|https?://|@\w+\.)",
+    re.I,
+)
+
+
+def strip_metadata(text: str) -> str:
+    """Drop title-page and header/footer lines (institution, course name, instructor, page numbers) from lesson text."""
+    kept = [ln for ln in str(text).splitlines() if not (_META_LINE.search(ln) and len(ln.strip()) < 140)]
+    return "\n".join(kept).strip()
+
+
+MAX_LEARN = 14      # points per lesson: enough to teach every part of a lesson's material one step at a time
+MAX_PRACTICE = 4
+SOURCE_CHARS = 3500  # curriculum text kept with each point, so it is taught from its own material
+
+
+def attach_sources(learn: List[Dict[str, Any]], chunks: List[Dict[str, Any]], skipped: Optional[List[int]] = None) -> None:
+    """
+    Give every point the exact text it must teach, and guarantee that no excerpt is left out: an excerpt the
+    planner did not assign to any point goes to the nearest point before it (or the first point).
+    """
+    if not learn or not chunks:
+        return
+    count = len(chunks)
+    skip = {n - 1 for n in (skipped or []) if 1 <= n <= count}
+    owner: Dict[int, int] = {}
+    for n, item in enumerate(learn):
+        for sec in item.pop("sections", []):
+            if 1 <= sec <= count:
+                owner.setdefault(sec - 1, n)
+    last = 0
+    for c in range(count):
+        if c in owner:
+            last = owner[c]
+        elif c not in skip and strip_metadata(chunks[c].get("content", "")):
+            owner[c] = last
+    for n, item in enumerate(learn):
+        text, used = [], 0
+        for c in sorted(i for i, o in owner.items() if o == n):
+            ch = chunks[c]
+            body = strip_metadata(ch.get("content", ""))
+            if used + len(body) > SOURCE_CHARS:
+                body = body[: max(0, SOURCE_CHARS - used)]
+            if body:
+                text.append({"filename": ch.get("filename", "course material"), "chunk_index": ch.get("chunk_index", c), "content": body})
+                used += len(body)
+        item["sources"] = text
+
+
+def normalize_plan(plan: LessonPlan, chunks: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """Clamp sizes and fill gaps so the rest of the code can rely on the shape."""
     learn = [
-        {"point": _clean(i.point, 200), "check": _clean(i.check, 200) or "In your own words, what does that mean?"}
+        {"point": _clean(i.point, 400), "check": _clean(i.check, 200) or "In your own words, what does that mean?",
+         "sections": list(i.sections)}
         for i in plan.learn if _clean(i.point)
-    ][:4]
-    practice = [{"task": _clean(i.task, 300), "hint": _clean(i.hint, 200)} for i in plan.practice if _clean(i.task)][:2]
+    ][:MAX_LEARN]
+    practice = [{"task": _clean(i.task, 300), "hint": _clean(i.hint, 200)} for i in plan.practice if _clean(i.task)][:MAX_PRACTICE]
     topic = _clean(plan.topic, 80) or "Your lesson"
     if not learn:
-        learn = [{"point": topic, "check": "In your own words, what does that mean?"}]
+        learn = [{"point": topic, "check": "In your own words, what does that mean?", "sections": []}]
     if not practice:
         practice = [{"task": f"Explain {topic} in your own words and give one example.", "hint": ""}]
-    takeaways = [_clean(t, 200) for t in plan.takeaways if _clean(t)][:3] or [l["point"] for l in learn[:3]]
-    roadmap = [_clean(r, 80) for r in plan.roadmap if _clean(r)][:3] or [l["point"] for l in learn[:3]]
+    takeaways = [_clean(t, 200) for t in plan.takeaways if _clean(t)][:8] or [l["point"] for l in learn[:6]]
+    roadmap = [_clean(r, 80) for r in plan.roadmap if _clean(r)][:6] or [l["point"][:80] for l in learn[:6]]
+    attach_sources(learn, chunks or [], list(plan.skipped_sections))
     return {
         "topic": topic,
         "objective": _clean(plan.objective, 240) or f"Understand {topic}.",
@@ -85,25 +143,37 @@ def fallback_plan(request: str, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
     """A usable plan built straight from the retrieved text, for when the planner is unavailable."""
     topic = _clean(re.sub(r"[?!.]", "", request), 60) or "Your lesson"
     snippets: List[str] = []
-    for chunk in chunks:
-        sentence = re.split(r"(?<=[.!?])\s+", _clean(chunk.get("content", ""), 400))[0]
+    sections: List[int] = []
+    for n, chunk in enumerate(chunks, 1):
+        sentence = re.split(r"(?<=[.!?])\s+", _clean(strip_metadata(chunk.get("content", "")), 400))[0]
         if len(sentence) > 25 and sentence not in snippets:
             snippets.append(sentence[:200])
-    points = snippets[:3] or [topic]
+            sections.append(n)
+    snippets, sections = snippets[:MAX_LEARN], sections[:MAX_LEARN]
+    points = snippets or [topic]
     return normalize_plan(LessonPlan(
         topic=topic,
         objective=f"Understand the key ideas of {topic}.",
         hook=f"Let's start with why {topic} matters.",
         roadmap=[f"Idea {i + 1}" for i in range(len(points))],
-        learn=[LearnItem(point=p, check="What stands out to you about that?") for p in points],
+        learn=[LearnItem(point=p, check="What stands out to you about that?", sections=[sections[i]] if i < len(sections) else [])
+               for i, p in enumerate(points)],
         practice=[PracticeItem(task=f"Explain {topic} in your own words and give an example.")],
-        takeaways=points,
-    ))
+        takeaways=points[:6],
+    ), chunks)
 
 
-PLANNER_PROMPT = """You are an instructional designer. Plan a short, focused tutoring lesson for the student's request, \
-using ONLY the curriculum excerpts below. Do not invent facts that are not in the excerpts. Be CONCISE: every string is one short sentence or phrase. Everything in the plan must be directly about the student's request; \
-do not wander into neighbouring topics that happen to appear in the excerpts.
+PLANNER_PROMPT = """You are an instructional designer. Plan a thorough tutoring lesson for the student's request, \
+using ONLY the numbered curriculum excerpts below. Do not invent facts that are not in the excerpts. The lesson must \
+COVER EVERYTHING in the excerpts: every concept, definition, rule, step, formula, example, list item and exception must \
+be taught by some point, in the order the material presents them. Do not summarise the material down to a few ideas and \
+do not skip anything because it seems minor. Stay on the material in the excerpts; do not wander into other topics.
+
+IGNORE the document's own metadata and page furniture: title pages, the university, college, department, course \
+name or code, instructor names, dates, semesters, copyright lines, tables of contents, headers, footers, page numbers, \
+references and acknowledgements are NOT subject matter. Never make a point, a check question, a practice task, the hook \
+or the roadmap about them, and never ask the student about them. List the numbers of excerpts that contain only that \
+kind of material in "skipped_sections". The topic, hook and roadmap must be about the subject being taught.
 
 Student's request: {request}
 
@@ -111,10 +181,13 @@ Plan these parts:
 - topic: a short lesson title.
 - objective: one sentence on what the student will be able to do afterwards.
 - hook: one sentence: a real-world scenario or intriguing question to open the lesson (do not ask what they already know).
-- roadmap: 2-3 short phrases previewing what will be covered.
-- learn: 2-4 items, in a sensible teaching order. Each has the single idea to teach ("point") and a quick check question.
-- practice: 1-2 small tasks that make the student apply the ideas (scenarios or problems, no answers).
-- takeaways: 2-3 key points for the final recap.
+- roadmap: short phrases previewing everything that will be covered, in order.
+- learn: one item per distinct idea, in the order of the material, as many as the material needs (usually 4 to 12; never \
+fewer than the number of separate ideas in the excerpts). Each has "point" (the idea AND its key details the tutor must \
+explain: definitions, steps, examples, numbers), a quick "check" question, and "sections" (the numbers of the \
+excerpts that contain it; every excerpt number must appear in at least one item).
+- practice: 2-4 tasks that make the student apply the ideas across the lesson (scenarios or problems, no answers).
+- takeaways: the key points for the final recap, covering the whole lesson.
 - next_up: a related topic from the excerpts to study next (or empty).
 
 [CURRICULUM EXCERPTS]
@@ -122,28 +195,31 @@ Plan these parts:
 [END EXCERPTS]"""
 
 
+PLAN_CHUNKS = 24  # a course lesson is at most 6 chunks; topic lessons plan from the best matches
+
+
 def _plan_sync(client: Any, request: str, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
     context = "\n\n---\n".join(
-        f"[{c.get('filename', 'material')}] {c.get('content', '')[:900]}" for c in chunks[:6]
+        f"[Excerpt {n}: {c.get('filename', 'material')}]\n{c.get('content', '')}" for n, c in enumerate(chunks[:PLAN_CHUNKS], 1)
     )
     response = client.models.generate_content(
         model=settings.GEMINI_MODEL,
         contents=PLANNER_PROMPT.format(request=request[:500], context=context),
         config=types.GenerateContentConfig(
             temperature=0.3,
-            max_output_tokens=1000,
+            max_output_tokens=6000,
             response_mime_type="application/json",
             response_schema=LessonPlan,
         ),
     )
-    return normalize_plan(LessonPlan.model_validate_json(response.text))
+    return normalize_plan(LessonPlan.model_validate_json(response.text), chunks[:PLAN_CHUNKS])
 
 
 async def create_plan(client: Any, request: str, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
     if client is None:
         return fallback_plan(request, chunks)
     try:
-        return await asyncio.wait_for(asyncio.to_thread(_plan_sync, client, request, chunks), timeout=15)
+        return await asyncio.wait_for(asyncio.to_thread(_plan_sync, client, request, chunks), timeout=60)
     except Exception as exc:  # network, quota, bad JSON, timeout
         logger.warning(f"Lesson planner failed, using fallback plan: {exc}")
         return fallback_plan(request, chunks)
@@ -233,6 +309,9 @@ def save_state(session_id: str, state: LessonState) -> None:
         db.commit()
     if state.done:
         course.mark_session_lesson_complete(session_id)
+    elif state.plan:
+        # Each tutor step the student has worked through counts: progress is recorded as they go.
+        course.record_percent(session_id, round(100 * max(state.beat, 0) / len(state.beats)))
 
 
 def reset_lesson(session_id: str) -> None:
@@ -404,6 +483,31 @@ def focus_text(state: LessonState) -> str:
     return " ".join(plan["takeaways"])
 
 
+def beat_context(state: LessonState, retrieved: List[Dict[str, Any]], *more: LessonState) -> List[Dict[str, Any]]:
+    """
+    The curriculum text the tutor teaches a step from. A learn point carries its own material (so everything the
+    notes say about it gets taught, in order); text found by search is added after it, without repeats.
+    """
+    out: List[Dict[str, Any]] = []
+    seen = set()
+
+    def add(chunk: Dict[str, Any]) -> None:
+        key = (chunk.get("filename"), chunk.get("chunk_index"), str(chunk.get("content", ""))[:60])
+        if key not in seen:
+            seen.add(key)
+            out.append(chunk)
+
+    for st in (state, *more):
+        if st.plan and not st.done and st.beat < len(st.beats):
+            stage, idx = st.beats[st.beat]
+            if stage == "LEARN":
+                for src in st.plan["learn"][idx].get("sources", []):
+                    add({**src, "snippet": src["content"][:200], "score": 1.0})
+    for chunk in retrieved[:3 if out else len(retrieved)]:
+        add(chunk)
+    return out
+
+
 # How the tutor responds to the student's answer to its previous question. Used by every phase so a wrong answer
 # is always explained and corrected, never just acknowledged and moved past.
 FEEDBACK_RULE = (
@@ -424,7 +528,9 @@ def build_directive(state: LessonState, mode: str = "continue", hold: bool = Fal
     header = (
         f"Lesson: {plan['topic']}. Objective: {plan['objective']}\n"
         "Stay strictly on this step: use only the curriculum context, do not bring in other topics or outside "
-        "knowledge, and do not teach anything this directive does not ask for.\n"
+        "knowledge, and do not teach anything this directive does not ask for. Teach only the subject matter: never "
+        "mention or ask about the document itself (its title page, university, department, course name or code, "
+        "instructor, dates, page numbers), even if that text appears in the context.\n"
     )
 
     if state.done and state.in_course:
@@ -466,7 +572,12 @@ def build_directive(state: LessonState, mode: str = "continue", hold: bool = Fal
                 if ack else
                 (FEEDBACK_RULE if idx > 0 else "")
             ) +
-            "Teach ONLY this point, in 3 to 5 spoken sentences, with one concrete example from the curriculum context. "
+            "Teach ONLY this point, slowly and in detail, in about 8 to 14 spoken sentences. Cover EVERYTHING the "
+            "curriculum context says about it: define each term, explain the reason behind it, go through every step "
+            "in order, and walk through each example or number in the material. Do not summarise, do not skip any "
+            "detail the context gives, and do not rush; add a plain-language analogy only if it helps. If the context "
+            "holds more than fits comfortably, explain the first half fully and tell the student you will continue "
+            "right after their answer. "
             f"End with a quick check question like: {item['check']} "
             "Do not move on to later points."
         )
@@ -585,6 +696,7 @@ def course_state(session_id: str) -> Optional[Dict[str, Any]]:
     return {
         "total": info["total"],
         "completed": info["completed"],
+        "percent": info["percent"],
         "current_id": info["current"]["id"] if info["current"] else None,
         "current_position": info["current"]["position"] if info["current"] else None,
         "lessons": info["lessons"],
@@ -681,7 +793,7 @@ async def next_step_briefing(session_id: str, retrieve: Retrieve) -> Optional[st
     checkpoint_soon = (not checkpoint_next) and crosses_phase(state)  # their next reply ends this phase
     focus = focus_text(upcoming) or focus_text(state)
     chunks, _ = await asyncio.to_thread(retrieve, focus[:600])
-    context = _format_context(chunks)
+    context = _format_context(beat_context(upcoming, chunks, state))
     total = len(state.beats)
     notes = []
     if state.holds > 0:
@@ -781,7 +893,7 @@ async def prepare_turn(
             state.paused = 0
             save_state(session_id, state)
             focus = focus_text(state)
-            chunks = (await asyncio.to_thread(retrieve, focus[:600]))[0] if focus else []
+            chunks = beat_context(state, (await asyncio.to_thread(retrieve, focus[:600]))[0] if focus else [])
             name = _first_name((course.session_info(session_id) or {}).get("user_name"))
             return TurnPrep(chunks=chunks, in_bounds=True, directive=resume_directive(state, name), mode="resume")
         if is_acknowledgement(user_message) or len(_norm(user_message).split()) <= 3:
@@ -805,11 +917,12 @@ async def prepare_turn(
             chunks, ok = await asyncio.to_thread(retrieve, f"{focus} {user_message}"[:600])
             if not ok:
                 chunks, ok = await asyncio.to_thread(retrieve, focus[:600])
+        chunks = beat_context(state, chunks)
         # Inside an active lesson a reply like "yes" must never be treated as off-topic.
         return TurnPrep(chunks=chunks, in_bounds=True, directive=build_directive(state, "continue", hold, ack=is_acknowledgement(user_message)), mode=mode)
 
     # New lessons retrieve extra context once, for both the answer and the plan.
-    chunks, ok = await asyncio.to_thread(retrieve, retrieval_query, 8) if mode == "new_lesson" \
+    chunks, ok = await asyncio.to_thread(retrieve, retrieval_query, 12) if mode == "new_lesson" \
         else await asyncio.to_thread(retrieve, retrieval_query)
     plan_chunks = chunks
     chunks = chunks[:4] if mode == "new_lesson" else chunks
@@ -907,6 +1020,7 @@ async def start_course_lesson(
     state = LessonState(plan=plan, beat=0, holds=0, marker=memory.count_assistant_messages(session_id))
     save_state(session_id, state)
     course.set_session_lesson(session_id, lesson["id"])
+    course.record_percent(session_id, 0)  # a (re)started lesson begins from zero
     state = load_state(session_id)
 
     info = course.session_info(session_id) or {}

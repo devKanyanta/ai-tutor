@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { UploadCloud, CheckCircle2, Clock, AlertCircle, FileText, Trash2, RefreshCw, Upload, Check, Loader2, FileSpreadsheet, FileType2, Library } from 'lucide-react';
+import { ArrowUp, ArrowDown, X, UploadCloud, CheckCircle2, Clock, AlertCircle, FileText, Trash2, RefreshCw, Upload, Check, Loader2, FileSpreadsheet, FileType2, Library } from 'lucide-react';
 import type { DocumentItem } from '../../types';
 import { api } from '../../services/api';
 
@@ -22,9 +22,36 @@ export const DocumentManager: React.FC<DocumentManagerProps> = ({ token, tutorId
   const fileInputRef = useRef<HTMLInputElement>(null);
   const updateFileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFiles = async (fileList: FileList | null) => {
+  // Several files are staged first so the instructor can put them in teaching order before anything is processed.
+  const [staged, setStaged] = useState<File[]>([]);
+
+  const handleFiles = (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     const files = Array.from(fileList);
+    if (files.length === 1 && staged.length === 0) {
+      void uploadFiles(files);
+      return;
+    }
+    // Start from natural filename order ("2 Intro" before "10 Wrap-up"); the instructor adjusts from there.
+    const natural = [...files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    setStaged((cur) => [...cur, ...natural]);
+    setUploadError(null);
+    setUploadSuccess(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const moveStaged = (from: number, to: number) => {
+    setStaged((cur) => {
+      if (to < 0 || to >= cur.length) return cur;
+      const next = [...cur];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
+  };
+
+  const uploadFiles = async (files: File[]) => {
+    if (files.length === 0) return;
 
     setIsUploading(true);
     setUploadError(null);
@@ -46,6 +73,7 @@ export const DocumentManager: React.FC<DocumentManagerProps> = ({ token, tutorId
           setUploadError(batchResult.failed.map((f) => `${f.filename}: ${f.error}`).join('; '));
         }
       }
+      setStaged([]);
       onRefresh();
     } catch (err: any) {
       setUploadError(err.message || 'File upload failed');
@@ -174,6 +202,30 @@ export const DocumentManager: React.FC<DocumentManagerProps> = ({ token, tutorId
           </div>
         )}
       </div>
+
+      {staged.length > 0 && (
+        <section aria-label="Order before processing" className="card p-5">
+          <h2 className="font-serif text-lg font-semibold text-ink-900">Put these in teaching order</h2>
+          <p className="mt-1 text-sm text-ink-500">Lessons follow this order, top to bottom. Nothing is processed until you press upload.</p>
+          <ol className="mt-4 space-y-2">
+            {staged.map((f, i) => (
+              <li key={`${f.name}-${f.size}-${i}`} className="flex items-center gap-3 rounded-lg bg-ink-50 px-3 py-2">
+                <span className="w-6 text-center text-sm font-semibold text-ink-500">{i + 1}</span>
+                <span className="min-w-0 flex-1 truncate text-sm text-ink-900">{f.name}</span>
+                <button type="button" aria-label={`Move ${f.name} up`} disabled={i === 0 || isUploading} onClick={() => moveStaged(i, i - 1)} className="btn-ghost p-1.5 disabled:opacity-30"><ArrowUp className="h-4 w-4" /></button>
+                <button type="button" aria-label={`Move ${f.name} down`} disabled={i === staged.length - 1 || isUploading} onClick={() => moveStaged(i, i + 1)} className="btn-ghost p-1.5 disabled:opacity-30"><ArrowDown className="h-4 w-4" /></button>
+                <button type="button" aria-label={`Remove ${f.name}`} disabled={isUploading} onClick={() => setStaged((cur) => cur.filter((_, j) => j !== i))} className="btn-ghost p-1.5"><X className="h-4 w-4" /></button>
+              </li>
+            ))}
+          </ol>
+          <div className="mt-4 flex gap-3">
+            <button type="button" className="btn btn-primary" disabled={isUploading} onClick={() => uploadFiles(staged)}>
+              {isUploading ? 'Processing…' : `Upload ${staged.length} file${staged.length === 1 ? '' : 's'} in this order`}
+            </button>
+            <button type="button" className="btn btn-ghost" disabled={isUploading} onClick={() => setStaged([])}>Cancel</button>
+          </div>
+        </section>
+      )}
 
       <section aria-label="Uploaded materials">
         <div className="mb-3 flex items-center justify-between">

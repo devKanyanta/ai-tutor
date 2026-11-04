@@ -24,6 +24,7 @@ class TutorResponse(BaseModel):
     ready_documents: int = 0
     lesson_count: int = 0
     completed_lessons: int = 0
+    progress_percent: int = 0
     created_at: str
 
 class NewSessionRequest(BaseModel):

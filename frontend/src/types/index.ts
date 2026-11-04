@@ -28,6 +28,8 @@ export interface Tutor {
   /** Lessons in the course and how many of them this student has finished. */
   lesson_count: number;
   completed_lessons: number;
+  /** Overall course progress 0-100, counting partly finished lessons. */
+  progress_percent: number;
   created_at: string;
 }
 
@@ -95,11 +97,15 @@ export interface CourseLesson {
   position: number;
   title: string;
   status?: 'not_started' | 'in_progress' | 'completed';
+  /** How far through this lesson the student is, 0-100. */
+  percent?: number;
 }
 
 export interface CourseState {
   total: number;
   completed: number;
+  /** Overall course progress 0-100, counting partly finished lessons. */
+  percent: number;
   current_id: string | null;
   current_position: number | null;
   lessons: CourseLesson[];

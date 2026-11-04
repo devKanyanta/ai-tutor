@@ -68,6 +68,11 @@ def init_db():
     );
     """)
 
+    try:
+        cursor.execute("ALTER TABLE lesson_progress ADD COLUMN percent INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
+
     # Documents table (REQ-IN-03, REQ-IN-04)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS documents (

@@ -64,8 +64,8 @@ export const TutorPicker: React.FC = () => {
             {tutors.map((tutor, i) => {
               const ready = tutor.ready_documents > 0 && tutor.lesson_count > 0;
               const finished = tutor.lesson_count > 0 && tutor.completed_lessons >= tutor.lesson_count;
-              const started = tutor.completed_lessons > 0;
-              const percent = tutor.lesson_count ? Math.round((tutor.completed_lessons / tutor.lesson_count) * 100) : 0;
+              const percent = tutor.progress_percent;
+              const started = tutor.completed_lessons > 0 || percent > 0;
               const body = (
                 <>
                   <span className="flex h-11 w-11 items-center justify-center rounded-md bg-board-800 font-serif text-lg font-bold text-[#f6f2e9]">
@@ -82,7 +82,7 @@ export const TutorPicker: React.FC = () => {
                     )}
                     <p className="flex items-center justify-between gap-2 text-xs font-medium text-ink-500">
                       <span className="flex items-center gap-1.5"><BookOpen className="h-3.5 w-3.5" />
-                        {ready ? `${tutor.completed_lessons} of ${tutor.lesson_count} lessons done` : 'Materials coming soon'}
+                        {ready ? `${percent}% complete · ${tutor.completed_lessons} of ${tutor.lesson_count} lessons done` : 'Materials coming soon'}
                       </span>
                       {ready && <span className="flex items-center gap-1 text-board-700">{finished ? 'Review' : started ? 'Continue' : 'Start'} <ArrowRight className="h-3.5 w-3.5" /></span>}
                     </p>

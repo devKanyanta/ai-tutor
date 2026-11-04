@@ -78,6 +78,22 @@ def test_outline_is_built_from_documents_and_long_documents_are_split():
             client.delete(f"/api/admin/tutors/{tutor}", headers=ADMIN)
 
 
+def test_batch_upload_keeps_the_order_the_instructor_chose():
+    import io
+    names = ["c_third.txt", "a_first.txt", "b_second.txt"]  # deliberately not alphabetical
+    with TestClient(app) as client:
+        tutor = make_tutor(client, "Batch Order Tutor")
+        try:
+            res = client.post(
+                "/api/admin/documents/batch-upload", headers=ADMIN, data={"tutor_id": tutor},
+                files=[("files", (n, io.BytesIO(f"Notes from {n} about volcanoes and magma.".encode()), "text/plain")) for n in names],
+            )
+            assert res.status_code == 200 and len(res.json()["successful"]) == 3, res.text
+            assert [l["title"] for l in course.outline(tutor)] == ["c third", "a first", "b second"]
+        finally:
+            client.delete(f"/api/admin/tutors/{tutor}", headers=ADMIN)
+
+
 def test_lessons_start_automatically_and_progress_is_saved_per_student():
     """The tutor never asks what to study: it opens lesson 1, finishes it, then moves on, and progress outlives the session."""
     with TestClient(app) as client:
@@ -110,15 +126,21 @@ def test_lessons_start_automatically_and_progress_is_saved_per_student():
             back = asyncio.run(lesson.open_session(sid, retrieve, None))
             assert back.mode == "resume" and lesson.load_state(sid).paused == 0
 
-            # Finish the lesson (confirming every checkpoint).
+            # Finish the lesson (confirming every checkpoint). Progress is recorded step by step, not just at the end.
+            seen = []
             for _ in range(40):
                 if lesson.load_state(sid).done:
                     break
                 memory.add_message(sid, "assistant", "ok")
                 asyncio.run(lesson.prepare_turn(sid, "yes I am ready", "yes", retrieve, None))
+                lessons_now = client.get(f"/api/chat/tutors/{tutor}/course").json()["lessons"]
+                seen.append(lessons_now[0]["percent"])
+            assert seen[0] > 0 and seen == sorted(seen) and 0 < seen[-2] < 100, seen
+            assert lesson.public_state(sid)["course"]["lessons"][0]["percent"] == 100
             assert lesson.load_state(sid).done
             progress = client.get(f"/api/chat/tutors/{tutor}/course").json()
             assert progress["completed"] == 1 and progress["lessons"][0]["status"] == "completed"
+            assert progress["lessons"][0]["percent"] == 100 and progress["percent"] == 50  # 1 of 2 lessons done
 
             # "ready" after the wrap-up starts lesson 2 directly.
             memory.add_message(sid, "assistant", "ok")
