@@ -24,3 +24,6 @@ backend/data/
 .DS_Store
 *.log
 .freebuff/
+
+# Deployment notes (private)
+DEPLOY.md
