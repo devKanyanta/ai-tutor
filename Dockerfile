@@ -13,6 +13,9 @@ WORKDIR /app/backend
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app ./app
+COPY backend/alembic ./alembic
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/scripts ./scripts
 COPY --from=frontend /app/frontend/dist /app/frontend/dist
 ENV FRONTEND_DIST=/app/frontend/dist
 VOLUME /app/backend/data

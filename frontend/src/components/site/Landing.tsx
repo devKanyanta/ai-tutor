@@ -7,11 +7,11 @@ import { useReveal } from './useReveal';
 
 const FAQ = [
   ['Will it just give students the answers?', 'No. The tutor explains an idea in small steps, then asks the student to predict, explain or apply it before moving on. If a student says they are stuck, it teaches directly instead of quizzing them.'],
-  ['Where do the answers come from?', 'Only from the documents you upload. Every explanation shows the file and section it was drawn from. If a question is outside your materials, the tutor says so and steers back to the course.'],
-  ['What can I upload?', 'PDF, Word (.docx), plain text, Markdown and CSV files. Upload several at once, replace a file with a newer version, or delete it. Each document shows when it is ready for students.'],
-  ['Do students need an account?', 'Not for the lesson itself. A student opens the page and starts. Chats are stored without personal details: email addresses, phone numbers and ID-style numbers are removed before saving.'],
+  ['Is it really free?', 'During the trial, yes. It has daily limits on tutor replies and voice time, and a small cap on tutors and file size. We are still building Socratic: the final version will be released later, and everyone who tried it will be told by email.'],
+  ['Where do the answers come from?', 'Only from the document you upload. Every explanation shows the file and section it was drawn from. If a question is outside your materials, the tutor says so and steers back to the course.'],
+  ['What can I upload?', 'One PDF, Word (.docx), plain text, Markdown or CSV file per tutor. A tutor teaches a single course, so a Chemistry tutor never answers from your History notes. Want another subject? Make another tutor.'],
+  ['Do I need an account?', 'Yes, a free one, so your tutors and progress are saved and follow you across devices. Chats are stored without personal details: email addresses, phone numbers and ID-style numbers are removed before saving.'],
   ['How does the voice lesson work?', 'The student presses start and talks. The tutor answers out loud, shows the explanation on the board as slides, and can be interrupted at any time. It needs a microphone and a secure (HTTPS) connection.'],
-  ['What do instructors see?', 'The number of student sessions, how long conversations run, how often students were redirected back to the course, and thumbs up or down feedback on explanations.'],
 ];
 
 const Section: React.FC<{ id?: string; className?: string; children: React.ReactNode }> = ({ id, className = '', children }) => (
@@ -34,12 +34,11 @@ export const Landing: React.FC = () => {
           <Logo />
           <nav aria-label="Main" className="hidden items-center gap-8 text-sm font-medium text-ink-600 md:flex">
             <a href="#how" className="hover:text-ink-900">How it works</a>
-            <a href="#educators" className="hover:text-ink-900">For instructors</a>
+            <a href="#educators" className="hover:text-ink-900">Try it</a>
             <a href="#faq" className="hover:text-ink-900">FAQ</a>
           </nav>
           <div className="flex items-center gap-2">
-            <Link to="/studio" className="hidden px-3 py-2 text-sm font-medium text-ink-600 hover:text-ink-900 sm:block">Instructor sign in</Link>
-            <Link to="/learn" className="btn btn-primary !py-2 text-sm">Start learning</Link>
+            <Link to="/learn" className="btn btn-primary !py-2 text-sm">Try it free</Link>
           </div>
         </div>
       </header>
@@ -54,13 +53,14 @@ export const Landing: React.FC = () => {
                 Learn from your course, one idea at a time.
               </h1>
               <p className="anim-fade-up mt-6 max-w-lg text-lg leading-relaxed text-ink-600" style={{ animationDelay: '140ms' }}>
-                Socratic teaches only from the materials your instructor uploads. Talk through a topic out loud, follow along on the board, and check your understanding before moving on.
+                Upload your course notes and Socratic teaches only from them. Talk through a topic out loud, follow along on the board, and check your understanding before moving on.
               </p>
               <div className="anim-fade-up mt-9 flex flex-wrap items-center gap-3" style={{ animationDelay: '220ms' }}>
-                <Link to="/learn" className="btn btn-primary !px-6 !py-3.5 text-base">Start a lesson <ArrowRight className="h-4 w-4" /></Link>
-                <Link to="/studio" className="btn btn-ghost !px-6 !py-3.5 text-base">I’m an instructor</Link>
+                <Link to="/learn" className="btn btn-primary !px-6 !py-3.5 text-base">Try it free <ArrowRight className="h-4 w-4" /></Link>
               </div>
-              <p className="anim-fade-up mt-5 text-sm text-ink-500" style={{ animationDelay: '300ms' }}>No account needed. Works on phones, tablets and laptops.</p>
+              <p className="anim-fade-up mt-5 max-w-md text-sm text-ink-500" style={{ animationDelay: '300ms' }}>
+                Free trial with daily limits. We’re still building it; the full version is coming and we’ll email you when it’s out.
+              </p>
             </div>
             <div className="anim-fade-up" style={{ animationDelay: '200ms' }}><DemoLesson /></div>
           </div>
@@ -112,16 +112,16 @@ export const Landing: React.FC = () => {
         <Section id="educators" className="bg-board-900 text-[#f1ece0] on-dark">
           <div className="grid items-center gap-14 lg:grid-cols-2">
             <div className="reveal">
-              <p className="mb-3 text-sm font-semibold text-mark-300">For instructors</p>
-              <h2 className="text-4xl text-white sm:text-5xl">Your syllabus, your tutor.</h2>
+              <p className="mb-3 text-sm font-semibold text-mark-300">Free trial</p>
+              <h2 className="text-4xl text-white sm:text-5xl">Your notes, your tutor.</h2>
               <p className="mt-5 max-w-md text-lg leading-relaxed text-[#c9c3b3]">
-                Upload your notes and readings, and students can start asking questions the same day. No prompts to write, nothing to configure.
+                Upload one course file and start learning it right away. No prompts to write, nothing to configure.
               </p>
               <ul className="mt-8 space-y-5">
                 {[
-                  [FileUp, 'Upload and update', 'Drop in PDFs, Word files, Markdown, text or CSV. Replace a file when the material changes.'],
-                  [ShieldCheck, 'Stays on topic', 'The tutor declines to go beyond your materials and resists attempts to change its role.'],
-                  [BarChart3, 'See how it is used', 'Track sessions, conversation length, redirects and student feedback in one place.'],
+                  [FileUp, 'One file per tutor', 'PDF, Word, Markdown, text or CSV. Each tutor teaches a single course, so subjects never get mixed.'],
+                  [ShieldCheck, 'Stays on topic', 'The tutor declines to go beyond your material and resists attempts to change its role.'],
+                  [BarChart3, 'Pick up where you left off', 'Every lesson shows a percentage, and your place is saved to your account.'],
                 ].map(([Icon, t, d]) => {
                   const I = Icon as typeof FileUp;
                   return (
@@ -132,16 +132,15 @@ export const Landing: React.FC = () => {
                   );
                 })}
               </ul>
-              <Link to="/studio" className="btn mt-10 bg-[#f6f2e9] !px-6 !py-3 text-board-900 hover:bg-white">Open the instructor studio <ArrowRight className="h-4 w-4" /></Link>
+              <Link to="/learn" className="btn mt-10 bg-[#f6f2e9] !px-6 !py-3 text-board-900 hover:bg-white">Create my tutor <ArrowRight className="h-4 w-4" /></Link>
             </div>
 
-            <div className="reveal rounded-xl border border-white/15 bg-board-950/60 p-5" style={{ ['--d' as string]: '120ms' }} role="img" aria-label="Example of the document library">
-              <p className="mb-4 text-xs uppercase tracking-[0.14em] text-[#c9c3b3]">Example library</p>
+            <div className="reveal rounded-xl border border-white/15 bg-board-950/60 p-5" style={{ ['--d' as string]: '120ms' }} role="img" aria-label="Example tutors, each with a single course file">
+              <p className="mb-4 text-xs uppercase tracking-[0.14em] text-[#c9c3b3]">Example tutors</p>
               {[
-                ['Syllabus.pdf', 'PDF', 'Ready'],
-                ['Week 1 – Reading notes.docx', 'DOCX', 'Ready'],
-                ['Week 2 – Lecture slides.pdf', 'PDF', 'Ready'],
-                ['Glossary.csv', 'CSV', 'Indexing'],
+                ['Biology 101 – Lecture notes.pdf', 'PDF', 'Ready'],
+                ['Intro to Economics.docx', 'DOCX', 'Ready'],
+                ['Spanish vocabulary.csv', 'CSV', 'Reading'],
               ].map(([name, type, status]) => (
                 <div key={name} className="flex items-center gap-3 border-t border-white/10 py-3 first:border-t-0">
                   <span className="w-11 rounded bg-white/10 py-1 text-center text-[10px] font-semibold tracking-wider text-[#d8d2c2]">{type}</span>
@@ -187,10 +186,9 @@ export const Landing: React.FC = () => {
         <section className="px-5 pb-24 sm:px-8">
           <div className="reveal mx-auto max-w-6xl rounded-2xl bg-board-800 px-8 py-14 text-center on-dark sm:py-20">
             <h2 className="mx-auto max-w-2xl text-3xl text-white sm:text-5xl">Ready to learn it properly?</h2>
-            <p className="mx-auto mt-4 max-w-lg text-[#c9c3b3]">Open a lesson and ask about anything in your course. It takes a few seconds to start.</p>
+            <p className="mx-auto mt-4 max-w-lg text-[#c9c3b3]">Try it free with your own notes. It takes a minute to set up.</p>
             <div className="mt-8 flex flex-wrap justify-center gap-3">
-              <Link to="/learn" className="btn bg-[#f6f2e9] !px-6 !py-3.5 text-base text-board-900 hover:bg-white">Start a lesson <ArrowRight className="h-4 w-4" /></Link>
-              <Link to="/studio" className="btn !px-6 !py-3.5 text-base text-[#f6f2e9] ring-1 ring-inset ring-white/30 hover:bg-white/10">Set up my course</Link>
+              <Link to="/learn" className="btn bg-[#f6f2e9] !px-6 !py-3.5 text-base text-board-900 hover:bg-white">Try it free <ArrowRight className="h-4 w-4" /></Link>
             </div>
           </div>
         </section>
@@ -199,10 +197,12 @@ export const Landing: React.FC = () => {
       <footer className="border-t border-ink-200 px-5 py-10 sm:px-8">
         <div className="mx-auto flex max-w-6xl flex-col items-start justify-between gap-6 sm:flex-row sm:items-center">
           <Logo />
-          <p className="max-w-md text-sm text-ink-500">Socratic answers only from the materials its instructor provides. It is a study aid and does not replace teaching.</p>
-          <nav aria-label="Footer" className="flex gap-6 text-sm font-medium text-ink-600">
+          <p className="max-w-md text-sm text-ink-500">Socratic answers only from the material you give it. It is a study aid and does not replace teaching. Free trial: the full version is on its way.</p>
+          <nav aria-label="Footer" className="flex flex-wrap gap-x-6 gap-y-2 text-sm font-medium text-ink-600">
             <Link to="/learn" className="hover:text-ink-900">Learn</Link>
-            <Link to="/studio" className="hover:text-ink-900">Instructors</Link>
+            <a href="mailto:mapalokanyanta1@gmail.com" className="hover:text-ink-900">mapalokanyanta1@gmail.com</a>
+            <a href="tel:+260765237189" className="hover:text-ink-900">0765237189</a>
+            <a href="https://github.com/devKanyanta" target="_blank" rel="noreferrer" className="hover:text-ink-900">GitHub @devKanyanta</a>
           </nav>
         </div>
       </footer>

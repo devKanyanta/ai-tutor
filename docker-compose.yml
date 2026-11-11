@@ -1,11 +1,33 @@
 services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ai_tutor
+      POSTGRES_USER: ai_tutor
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_tutor -d ai_tutor"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   tutor:
     build: .
     ports:
       - "8006:8006"
     env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://ai_tutor:${POSTGRES_PASSWORD}@db:5432/ai_tutor
+    depends_on:
+      db:
+        condition: service_healthy
     volumes:
-      - tutor-data:/app/backend/data   # database, uploads and vector index persist here
+      - tutor-data:/app/backend/data   # uploads and the vector index persist here (the database is in Postgres)
     restart: unless-stopped
+
 volumes:
   tutor-data:
+  pg-data:

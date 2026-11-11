@@ -21,7 +21,7 @@ from app.db.models import (
     TutorResponse,
 )
 from app.ingestion.pipeline import pipeline
-from app.tutor import course
+from app.tutor import course, manage
 from pydantic import BaseModel, Field
 from app.rag.vector_store import vector_store
 
@@ -66,7 +66,7 @@ def _require_tutor(tutor_id: str):
 
 def _tutor_response(r, db) -> TutorResponse:
     counts = db.execute(
-        "SELECT COUNT(*) AS n, COALESCE(SUM(status = 'READY'), 0) AS ready FROM documents WHERE tutor_id = ?",
+        "SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN status = 'READY' THEN 1 ELSE 0 END), 0) AS ready FROM documents WHERE tutor_id = ?",
         (r["id"],),
     ).fetchone()
     return TutorResponse(
@@ -146,25 +146,7 @@ async def set_tutor_lessons(tutor_id: str, payload: LessonOrder, authorized: boo
 async def delete_tutor(tutor_id: str, authorized: bool = Depends(verify_admin_token)):
     """Delete a tutor together with its documents, vectors and student sessions."""
     tutor = _require_tutor(tutor_id)
-    with get_db() as db:
-        docs = db.execute("SELECT id, file_path FROM documents WHERE tutor_id = ?", (tutor_id,)).fetchall()
-        for doc in docs:
-            try:
-                Path(doc["file_path"]).unlink(missing_ok=True)
-            except OSError:
-                pass
-            vector_store.delete_document(doc["id"])
-            db.execute("DELETE FROM chunks WHERE document_id = ?", (doc["id"],))
-        db.execute("DELETE FROM lesson_progress WHERE lesson_id IN (SELECT id FROM course_lessons WHERE tutor_id = ?)", (tutor_id,))
-        db.execute("DELETE FROM course_lessons WHERE tutor_id = ?", (tutor_id,))
-        db.execute("DELETE FROM documents WHERE tutor_id = ?", (tutor_id,))
-        sessions = "SELECT id FROM sessions WHERE tutor_id = ?"
-        db.execute(f"DELETE FROM feedback WHERE session_id IN ({sessions})", (tutor_id,))
-        db.execute(f"DELETE FROM deflections WHERE session_id IN ({sessions})", (tutor_id,))
-        db.execute(f"DELETE FROM messages WHERE session_id IN ({sessions})", (tutor_id,))
-        db.execute("DELETE FROM sessions WHERE tutor_id = ?", (tutor_id,))
-        db.execute("DELETE FROM tutors WHERE id = ?", (tutor_id,))
-        db.commit()
+    manage.delete_tutor_data(tutor_id)
     return {"status": "success", "message": f"Tutor '{tutor['name']}' and its materials were deleted."}
 
 @router.get("/documents", response_model=DocumentListResponse)

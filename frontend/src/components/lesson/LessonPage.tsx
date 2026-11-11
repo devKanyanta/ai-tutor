@@ -92,6 +92,11 @@ export const LessonPage: React.FC<{ tutorId: string }> = ({ tutorId }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
+      if (response.status === 429) {  // free-trial allowance used up: show the server's explanation instead of a generic error
+        const info = await response.json().catch(() => null);
+        patch((m) => ({ ...m, content: typeof info?.detail === 'string' ? info.detail : 'You have used today\u2019s free trial allowance. Please come back tomorrow.' }));
+        return;
+      }
       if (!response.ok || !response.body) throw new Error('Stream request failed');
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -363,7 +368,7 @@ export const LessonPage: React.FC<{ tutorId: string }> = ({ tutorId }) => {
     return (
       <div className="flex h-dvh flex-col items-center justify-center bg-paper px-6 text-center">
         <p className="font-serif text-2xl font-semibold text-ink-900">That tutor isn’t available</p>
-        <p className="mt-2 max-w-sm text-ink-600">It may have been removed by its instructor.</p>
+        <p className="mt-2 max-w-sm text-ink-600">It may have been deleted.</p>
         <Link to="/learn" className="btn btn-primary mt-6">Choose a tutor</Link>
       </div>
     );

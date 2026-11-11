@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { getUserToken } from '../../services/api';
+import { BASE_URL, getUserToken } from '../../services/api';
 import type { LessonState } from '../../types';
 
 export interface VoiceLessonEvent {
@@ -247,10 +247,12 @@ export function useVoiceLesson({ sessionId, onEvent, onActiveChange }: VoiceLess
       });
       mediaStreamRef.current = stream;
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      socket = new WebSocket(
-        `${protocol}//${window.location.host}/api/chat/voice/${encodeURIComponent(sessionId)}?token=${encodeURIComponent(getUserToken())}`
-      );
+      // Follows VITE_API_BASE, so the socket reaches the API even when it lives on another port or host.
+      const apiUrl = new URL(BASE_URL, window.location.href);
+      apiUrl.protocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+      apiUrl.pathname = `${apiUrl.pathname.replace(/\/$/, '')}/chat/voice/${encodeURIComponent(sessionId)}`;
+      apiUrl.search = `?token=${encodeURIComponent(getUserToken())}`;
+      socket = new WebSocket(apiUrl.toString());
       socketRef.current = socket;
 
       const ready = new Promise<boolean>((resolve) => {

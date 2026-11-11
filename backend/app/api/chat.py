@@ -4,6 +4,7 @@ import binascii
 import inspect
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any, Optional
@@ -12,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from google.genai import types
 from sse_starlette.sse import EventSourceResponse
 
-from app.core import auth
+from app.core import auth, trial
 from app.core.config import settings
 from app.core.security import anonymize_text
 from app.db.database import get_db
@@ -25,6 +26,10 @@ from app.tutor.prompts import SOCRATIC_TUTOR_SYSTEM_PROMPT, tutor_persona_block
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+
+class TrialLimitReached(Exception):
+    """The student used up today's free-trial allowance during a live voice lesson."""
 
 
 @router.websocket("/voice/{session_id}")
@@ -48,6 +53,12 @@ async def voice_lesson(websocket: WebSocket, session_id: str):
             "message": "Voice lessons are unavailable because the Gemini API is not configured.",
         })
         await websocket.close(code=1011)
+        return
+
+    voice_budget = trial.voice_seconds_left(user["id"])
+    if voice_budget <= 0 or trial.turns_left(user["id"]) <= 0:
+        await websocket.send_json({"type": "error", "message": trial.DAILY_LIMIT_MESSAGE})
+        await websocket.close(code=4429)
         return
 
     tutor = memory.get_session_tutor(session_id)
@@ -316,6 +327,8 @@ async def voice_lesson(websocket: WebSocket, session_id: str):
                             "type": "turn_complete",
                             "message_id": message_id,
                         })
+                        if await asyncio.to_thread(trial.turns_left, user["id"]) <= 0:
+                            raise TrialLimitReached()
                     else:
                         await briefed_in_time()
                     assistant_text = ""
@@ -397,6 +410,7 @@ async def voice_lesson(websocket: WebSocket, session_id: str):
                 if function_responses:
                     await session.send_tool_response(function_responses=function_responses)
 
+    started = time.monotonic()
     try:
         async with tutor_engine.client.aio.live.connect(
             model=settings.GEMINI_LIVE_MODEL,
@@ -428,8 +442,10 @@ async def voice_lesson(websocket: WebSocket, session_id: str):
             microphone_task = asyncio.create_task(forward_microphone(live_session))
             tutor_task = asyncio.create_task(forward_tutor(live_session))
             done, pending = await asyncio.wait(
-                {microphone_task, tutor_task}, return_when=asyncio.FIRST_COMPLETED
+                {microphone_task, tutor_task}, return_when=asyncio.FIRST_COMPLETED, timeout=voice_budget
             )
+            if not done:
+                raise TrialLimitReached()  # today's voice minutes ran out mid-lesson
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
@@ -439,6 +455,12 @@ async def voice_lesson(websocket: WebSocket, session_id: str):
                     raise error
     except WebSocketDisconnect:
         pass
+    except TrialLimitReached:
+        try:
+            await websocket.send_json({"type": "error", "message": trial.DAILY_LIMIT_MESSAGE})
+            await websocket.close(code=4429)
+        except Exception:
+            pass
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -451,26 +473,35 @@ async def voice_lesson(websocket: WebSocket, session_id: str):
             await websocket.close(code=1011)
         except Exception:
             pass
+    finally:
+        # Live voice time counts against the student's daily trial allowance.
+        try:
+            await asyncio.shield(asyncio.to_thread(trial.record_voice_seconds, user["id"], int(time.monotonic() - started)))
+        except Exception:
+            logger.warning("Could not record voice usage", exc_info=True)
 
 
-def _tutor_rows(where: str = "", params: tuple = (), user_id: str | None = None) -> list[TutorResponse]:
+def _tutor_rows(user_id: str, extra_where: str = "", params: tuple = ()) -> list[TutorResponse]:
+    """Tutors this student may use: the ones they created, plus any instructor-made tutors. Never someone else's."""
     with get_db() as db:
         rows = db.execute(
             f"""SELECT t.*,
                    (SELECT COUNT(*) FROM documents d WHERE d.tutor_id = t.id) AS document_count,
                    (SELECT COUNT(*) FROM documents d WHERE d.tutor_id = t.id AND d.status = 'READY') AS ready_documents
-                FROM tutors t {where} ORDER BY t.created_at DESC, t.name""",
-            params,
+                FROM tutors t WHERE (t.owner_id IS NULL OR t.owner_id = ?) {extra_where}
+                ORDER BY (t.owner_id IS NULL), t.created_at DESC, t.name""",
+            (user_id, *params),
         ).fetchall()
     result = []
     for r in rows:
-        progress = course.summary(r["id"], user_id) if user_id else {"total": 0, "completed": 0}
+        progress = course.summary(r["id"], user_id)
         result.append(TutorResponse(
             id=r["id"], name=r["name"], subject=r["subject"], description=r["description"],
             document_count=r["document_count"], ready_documents=r["ready_documents"],
             lesson_count=progress["total"], completed_lessons=progress["completed"],
             progress_percent=progress.get("percent", 0),
             created_at=str(r["created_at"]),
+            owned=r["owner_id"] == user_id,
         ))
     return result
 
@@ -478,12 +509,12 @@ def _tutor_rows(where: str = "", params: tuple = (), user_id: str | None = None)
 @router.get("/tutors")
 async def list_tutors(user: dict = Depends(auth.current_user)):
     """Tutors a signed-in student can choose from, with their own progress. Instructions stay private."""
-    return {"tutors": _tutor_rows(user_id=user["id"])}
+    return {"tutors": _tutor_rows(user["id"]), "trial": trial.status_for(user["id"])}
 
 
 @router.get("/tutors/{tutor_id}")
 async def get_tutor(tutor_id: str, user: dict = Depends(auth.current_user)):
-    found = _tutor_rows("WHERE t.id = ?", (tutor_id,), user["id"])
+    found = _tutor_rows(user["id"], "AND t.id = ?", (tutor_id,))
     if not found:
         raise HTTPException(status_code=404, detail="Tutor not found")
     return found[0]
@@ -495,7 +526,7 @@ async def create_new_session(payload: NewSessionRequest, user: dict = Depends(au
     The student's session with one tutor. Returns their existing one so the course is picked up where it was
     left (progress lives on the account); fresh=true forces a brand-new session.
     """
-    if not _tutor_rows("WHERE t.id = ?", (payload.tutor_id,)):
+    if not _tutor_rows(user["id"], "AND t.id = ?", (payload.tutor_id,)):
         raise HTTPException(status_code=404, detail="Tutor not found")
     existing = None if payload.fresh else memory.find_active_session(user["id"], payload.tutor_id)
     session_id = existing or memory.get_or_create_session(tutor_id=payload.tutor_id, user_id=user["id"])
@@ -505,7 +536,7 @@ async def create_new_session(payload: NewSessionRequest, user: dict = Depends(au
 @router.get("/tutors/{tutor_id}/course")
 async def get_course(tutor_id: str, user: dict = Depends(auth.current_user)):
     """The tutor's lesson outline with this student's progress."""
-    if not _tutor_rows("WHERE t.id = ?", (tutor_id,)):
+    if not _tutor_rows(user["id"], "AND t.id = ?", (tutor_id,)):
         raise HTTPException(status_code=404, detail="Tutor not found")
     lessons = course.outline(tutor_id, user["id"])
     return {"lessons": lessons, "total": len(lessons), "completed": sum(1 for l in lessons if l["status"] == "completed"),
@@ -547,6 +578,7 @@ async def clear_session(session_id: str, user: dict = Depends(auth.current_user)
 async def stream_chat(payload: ChatRequest, user: dict = Depends(auth.current_user)):
     """Stream the Socratic AI Tutor response via Server-Sent Events (SSE)."""
     auth.require_session(payload.session_id, user)
+    trial.ensure_turn_budget(user["id"])
     async def event_generator():
         try:
             async for event in tutor_engine.stream_response(payload.session_id, payload.message):
@@ -567,6 +599,8 @@ async def stream_chat(payload: ChatRequest, user: dict = Depends(auth.current_us
 async def open_lesson(payload: OpenRequest, user: dict = Depends(auth.current_user)):
     """The tutor speaks first: start the student's next lesson (or resume it). Only for an empty conversation."""
     auth.require_session(payload.session_id, user)
+    if not memory.get_recent_messages(payload.session_id):
+        trial.ensure_turn_budget(user["id"])
 
     async def event_generator():
         if memory.get_recent_messages(payload.session_id):

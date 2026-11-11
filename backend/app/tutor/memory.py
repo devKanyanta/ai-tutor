@@ -31,7 +31,7 @@ class ConversationMemory:
         """The student's most recent session with this tutor, so their lesson is always picked back up."""
         with get_db() as db:
             row = db.execute(
-                "SELECT id FROM sessions WHERE user_id = ? AND tutor_id = ? ORDER BY last_active DESC, rowid DESC LIMIT 1",
+                "SELECT id FROM sessions WHERE user_id = ? AND tutor_id = ? ORDER BY last_active DESC, seq DESC LIMIT 1",
                 (user_id, tutor_id),
             ).fetchone()
         return row["id"] if row else None
@@ -67,6 +67,13 @@ class ConversationMemory:
                 "UPDATE sessions SET last_active = CURRENT_TIMESTAMP WHERE id = ?",
                 (session_id,)
             )
+            if role == "assistant":  # each tutor reply counts against the student's daily trial allowance
+                db.execute(
+                    "INSERT INTO usage_daily (user_id, day, turns) "
+                    "SELECT user_id, CAST((now() AT TIME ZONE 'UTC') AS date), 1 FROM sessions WHERE id = ? AND user_id IS NOT NULL "
+                    "ON CONFLICT (user_id, day) DO UPDATE SET turns = usage_daily.turns + 1",
+                    (session_id,)
+                )
             db.commit()
         return msg_id
 
@@ -75,10 +82,10 @@ class ConversationMemory:
         with get_db() as db:
             rows = db.execute(
                 """
-                SELECT rowid, id, role, content, sources, created_at 
+                SELECT seq, id, role, content, sources, created_at 
                 FROM messages 
                 WHERE session_id = ? 
-                ORDER BY rowid DESC 
+                ORDER BY seq DESC 
                 LIMIT ?
                 """,
                 (session_id, self.max_history_turns * 2)
@@ -88,12 +95,12 @@ class ConversationMemory:
         for r in reversed(rows):
             sources_val = json.loads(r["sources"]) if r["sources"] else []
             messages.append({
-                "rowid": r["rowid"],
+                "seq": r["seq"],
                 "id": r["id"],
                 "role": r["role"],
                 "content": r["content"],
                 "sources": sources_val,
-                "created_at": r["created_at"]
+                "created_at": str(r["created_at"])
             })
         return messages
 

@@ -25,6 +25,7 @@ class TutorResponse(BaseModel):
     lesson_count: int = 0
     completed_lessons: int = 0
     progress_percent: int = 0
+    owned: bool = False  # created by this student (trial) rather than by an instructor
     created_at: str
 
 class NewSessionRequest(BaseModel):

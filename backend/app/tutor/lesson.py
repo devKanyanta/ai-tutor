@@ -22,6 +22,9 @@ from app.db.database import get_db
 from app.tutor import course
 from app.tutor.memory import memory
 
+# (retrieve(query, top_k) -> (chunks, in_bounds)); defined here because annotations below use it.
+Retrieve = Callable[..., Tuple[List[Dict[str, Any]], bool]]
+
 logger = logging.getLogger(__name__)
 
 STAGES = ["WARMUP", "LEARN", "PRACTICE", "RECAP"]
@@ -857,8 +860,6 @@ class TurnPrep:
     mode: str = "continue"
     new_plan: bool = False
 
-
-Retrieve = Callable[..., Tuple[List[Dict[str, Any]], bool]]
 
 
 async def prepare_turn(

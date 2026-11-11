@@ -1,8 +1,8 @@
 # Socratic: an AI tutor for every course
 
-Instructors upload their course notes and get a dedicated AI tutor. Students sign in, pick a tutor, and are taught the whole course, one lesson at a time, by voice or text. The tutor teaches only from the instructor's material, remembers where each student stopped, and shows exactly how far through the course they are.
+**Free trial.** Sign up, upload one course file, and get a dedicated AI tutor that teaches the whole course, one lesson at a time, by voice or text. The tutor teaches only from your file, remembers where you stopped, and shows exactly how far through the course you are. The trial has daily limits (below); the final version is still being built and trial users will be told by email when it is released.
 
-> **One tutor per course.** Each tutor has its own materials, persona and curriculum. Nothing is shared between tutors, so a Chemistry tutor never answers from the History notes.
+> **One tutor, one course file.** Each tutor is built from a single file, and students have no way to add more. Nothing is shared between tutors, so a Chemistry tutor never answers from the History notes. For another subject, create another tutor.
 
 ---
 
@@ -54,16 +54,25 @@ The people, courses and numbers in the screenshots are made up.
 
 ## What it does
 
+### The free trial
+- **Students only.** There is no instructor sign-up for now. Anyone can create an account and **create a tutor from their own notes** (PDF, Word, TXT, Markdown or CSV).
+- **Always "Socratic".** Every trial tutor is named Socratic; the required **subject** tells your tutors apart.
+- **One file per tutor.** Mixing materials makes for a worse tutor, so the upload form takes exactly one file and the API offers no way to attach another. To change the material, delete the tutor and create a new one.
+- **Private.** A tutor you create is visible only to you.
+- **Limits** (all configurable, see [Configuration](#configuration)): 2 tutors per student, 5 MB per file, 40 tutor replies per day and 10 minutes of live voice per day (resets at midnight UTC). A failed upload does not use up a tutor slot.
+- **Told up front.** The tutor picker shows a trial notice with what is left of today's allowance, and says the final version is coming and users will be emailed (at their account address) when it is out. When a limit is hit the student gets a clear message instead of an error.
+- The instructor studio (`/studio`, admin password) still exists for the operator but is no longer linked from the site.
+
 ### For students
 - **Accounts and saved progress.** Sign up or sign in before reaching any tutor. Progress is stored on the account, so it follows you across devices.
-- **Pick a tutor, then just learn.** The tutor opens every session itself: it starts lesson 1, or resumes exactly where you stopped, and moves to the next lesson when one is done. It never asks "what topic do you want?".
+- **Create or pick a tutor, then just learn.** The tutor opens every session itself: it starts lesson 1, or resumes exactly where you stopped, and moves to the next lesson when one is done. It never asks "what topic do you want?".
 - **Percentage progress.** Every lesson has its own percentage that updates as you go, not only when the lesson ends. The header shows "Lesson 3 of 8 · 45%", the outline shows each lesson's percentage plus an overall bar, and the tutor picker shows each course's completion.
 - **Detailed, unhurried teaching.** Each lesson is planned to cover everything in its notes, one point at a time, with a check question after each. A point is explained at length (terms, reasoning, every step and example) rather than summarised.
 - **Honest feedback.** When an answer is wrong, the tutor says so, explains why, gives the correct answer with its reasoning, and offers to go over it again.
 - **Breaks and ending early.** Say "let's take a break" or "I want to end the lesson" at any time (or press the buttons). Your place is saved; say "I'm back" to continue.
 - **Voice or text.** Hands-free voice lessons (Gemini Live) with interruption, a slide board that follows the audio, and Normal / Relaxed / Slow pacing. Text chat streams token by token with Markdown, code and LaTeX math.
 
-### For instructors
+### For the operator (instructor studio)
 - **Many specialised tutors.** Create as many as you like, each with a name, subject, description and optional teaching guidance.
 - **Upload in teaching order.** Add PDF, Word, text, Markdown or CSV files. When you add several at once you first put them in order (up and down buttons), and nothing is processed until you confirm, so lessons come out in the order you teach.
 - **Course outline editor.** Every document becomes a lesson (long documents are split into parts). Rename and reorder lessons whenever you like.
@@ -96,7 +105,7 @@ student opens tutor ──► next unfinished lesson ──► planner reads tha
 
 ## Quick start
 
-**Requirements:** Python 3.12+ (the Docker image uses 3.12), Node 22+ (the Docker image uses 22), and a [Google Gemini API key](https://aistudio.google.com/apikey).
+**Requirements:** Python 3.12+ (the Docker image uses 3.12), Node 22+ (the Docker image uses 22), PostgreSQL 14+, and a [Google Gemini API key](https://aistudio.google.com/apikey).
 
 ### 1. Backend
 
@@ -106,7 +115,8 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-cp ../.env.example .env        # then set GEMINI_API_KEY and the admin values
+createdb ai_tutor              # PostgreSQL 14+; the tables are created automatically on startup
+cp ../.env.example .env        # then set GEMINI_API_KEY, DATABASE_URL and the admin values
 uvicorn app.main:app --host 0.0.0.0 --port 8006 --reload
 ```
 
@@ -126,10 +136,10 @@ Voice lessons need microphone permission and a secure origin. `localhost` works 
 
 ## Using the app
 
-1. **Instructor:** open **Instructors** (`/studio`) and sign in with `ADMIN_PASSWORD`. Create a tutor, upload its materials, put them in order, and check each document shows **READY**. Adjust lesson titles and order in the course outline if needed.
-2. **Student:** open the app, **sign up**, choose a tutor, and the lesson starts by itself. Use the header to see the outline, take a break, end the lesson or restart it.
+1. **Student:** open the app, click **Try it free**, sign up, then **Create a tutor from my notes** (a subject plus one file). The lesson starts by itself. Use the header to see the outline, take a break, end the lesson or restart it.
+2. **Operator (optional):** open `/studio` (not linked from the site) and sign in with `ADMIN_PASSWORD` to create shared tutors with several documents, order them and edit the outline. Shared tutors appear for every student alongside their own.
 
-Routes: `/` home, `/learn` tutor picker (and lessons via `?tutor=<id>`), `/studio` instructor portal.
+Routes: `/` home, `/learn` your tutors and trial notice (lessons via `?tutor=<id>`), `/studio` operator portal.
 
 ---
 
@@ -139,6 +149,8 @@ All settings are environment variables, or entries in `backend/.env`.
 
 | Variable | Required | Description |
 |---|---|---|
+| `DATABASE_URL` | Yes | PostgreSQL connection string, e.g. `postgresql+psycopg://user:password@localhost:5432/ai_tutor`. Defaults to the local socket database `ai_tutor`. |
+| `TRIAL_MAX_TUTORS` / `TRIAL_MAX_UPLOAD_MB` / `TRIAL_DAILY_TURNS` / `TRIAL_DAILY_VOICE_MINUTES` | No | Free-trial limits per student. Defaults 2 / 5 / 40 / 10. |
 | `GEMINI_API_KEY` | Yes | Gemini key for answers, planning, embeddings and voice. Without it the app runs in offline mode (no AI replies, no voice). |
 | `ADMIN_PASSWORD` | **Yes in production** | Instructor portal password. The default `admin123` is for local use only. |
 | `ADMIN_TOKEN` | **Yes in production** | Secret bearer token issued after instructor login. Use a long random string: `openssl rand -hex 32`. |
@@ -161,7 +173,9 @@ backend/
     api/                 auth.py (accounts) · chat.py (student chat, SSE, voice WebSocket)
                          admin.py (tutors, documents, outline, metrics) · health.py
     core/                config.py · auth.py (passwords, tokens) · security.py (guardrails, PII)
-    db/                  database.py (SQLite schema + migrations) · models.py (request/response models)
+    db/                  database.py (PostgreSQL via SQLAlchemy) · tables.py (schema) · models.py (request/response models)
+  alembic/               database migrations (run automatically at startup)
+  scripts/               migrate_sqlite_to_postgres.py (one-off import of the old tutor.db)
     ingestion/           parsers.py · chunker.py · pipeline.py
     rag/                 vector_store.py (NumPy cosine search, per-tutor filter) · retriever.py
     tutor/
@@ -178,7 +192,7 @@ frontend/src/
   router.tsx             small query-string router
 ```
 
-**Stack:** FastAPI, Uvicorn, SQLite, NumPy, Google Gemini (`google-genai`), PyPDF, python-docx on the backend; React 19, TypeScript, Vite, Tailwind CSS v4, KaTeX, React Markdown on the frontend.
+**Stack:** FastAPI, Uvicorn, PostgreSQL (SQLAlchemy + Alembic), NumPy, Google Gemini (`google-genai`), PyPDF, python-docx on the backend; React 19, TypeScript, Vite, Tailwind CSS v4, KaTeX, React Markdown on the frontend.
 
 ---
 
@@ -192,7 +206,8 @@ Student endpoints require `Authorization: Bearer <token>` from sign-in; instruct
 | Tutors and course | `GET /api/chat/tutors`, `/tutors/{id}`, `/tutors/{id}/course` |
 | Sessions | `POST /api/chat/session/new`, `POST /api/chat/open` (tutor speaks first), `POST /api/chat/stream`, `GET /api/chat/session/{id}/state`, `POST /api/chat/session/{id}/lesson/reset`, `GET /api/chat/history/{id}`, `POST /api/chat/feedback` |
 | Voice | WebSocket `/api/chat/voice/{session_id}?token=…` |
-| Instructor | `POST /api/admin/login`, `/api/admin/tutors` (CRUD), `/tutors/{id}/lessons` (order and titles), `/documents` (upload, batch upload, update, delete), `/metrics` |
+| Trial | `GET /api/trial/status`, `POST /api/trial/tutors` (multipart: name, subject, one file), `DELETE /api/trial/tutors/{id}` |
+| Operator | `POST /api/admin/login`, `/api/admin/tutors` (CRUD), `/tutors/{id}/lessons` (order and titles), `/documents` (upload, batch upload, update, delete), `/metrics` |
 | Health | `GET /api/health` |
 
 FastAPI's interactive docs are at `/docs` when the server is running.
@@ -207,7 +222,7 @@ source venv/bin/activate
 python -m pytest -q
 ```
 
-The suite uses your real Gemini key from `.env` (embeddings and planning are called live), so it needs network access and can hit free-tier quotas. Test data is cleaned up afterwards. A full run takes a few minutes.
+Tests run against their own PostgreSQL database (`ai_tutor_test` by default; create it with `createdb ai_tutor_test`, or point `TEST_DATABASE_URL` elsewhere). The suite uses your real Gemini key from `.env` (embeddings and planning are called live), so it needs network access and can hit free-tier quotas. Test data is cleaned up afterwards. A full run takes a few minutes.
 
 Frontend type-check, lint and production build:
 
@@ -221,16 +236,16 @@ npm run build
 
 ## Deployment
 
-The backend serves the built frontend itself, so the whole app is **one service on one port (8006)** under one domain. All persistent data (SQLite database, uploaded files, vector index) lives in `backend/data/`, so **that folder must be on persistent storage and backed up.**
+The backend serves the built frontend itself, so the whole app is **one service on one port (8006)** under one domain. Data lives in two places that must both be backed up: the **PostgreSQL database**, and `backend/data/` (uploaded files and the vector index). Docker Compose runs Postgres for you; otherwise point `DATABASE_URL` at your own server. Migrations run automatically on every start.
 
 ### Option A: Docker (recommended)
 
 ```bash
-cp .env.example .env     # set GEMINI_API_KEY, ADMIN_PASSWORD, ADMIN_TOKEN
+cp .env.example .env     # set GEMINI_API_KEY, POSTGRES_PASSWORD, ADMIN_PASSWORD, ADMIN_TOKEN
 docker compose up -d --build
 ```
 
-The app is now on `http://localhost:8006`. Data persists in the `tutor-data` volume. Update with `git pull && docker compose up -d --build`.
+The app is now on `http://localhost:8006`. Data persists in the `pg-data` (database) and `tutor-data` (files, vector index) volumes. Update with `git pull && docker compose up -d --build`.
 
 ### Option B: A Linux server without Docker
 
@@ -302,8 +317,9 @@ Deploy the repository using the included `Dockerfile`, expose port 8006, set the
 - [ ] `ADMIN_PASSWORD` and `ADMIN_TOKEN` changed from defaults
 - [ ] `GEMINI_API_KEY` set (never commit it; `.env` is git-ignored)
 - [ ] HTTPS enabled on your domain
-- [ ] `backend/data/` on persistent storage with regular backups
-- [ ] Curriculum uploaded in the Instructor Portal and each document shows **READY**
+- [ ] `DATABASE_URL` points at your PostgreSQL, and both the database and `backend/data/` are backed up
+- [ ] Existing SQLite data imported (if upgrading): `cd backend && python scripts/migrate_sqlite_to_postgres.py data/tutor.db`
+- [ ] Created a tutor from a test file and it shows lessons
 - [ ] Tried a text chat, an out-of-scope question, and a voice lesson on a phone
 - [ ] `GET /api/health` returns `healthy` (use it for uptime monitoring)
 
@@ -313,11 +329,21 @@ Deploy the repository using the included `Dockerfile`, expose port 8006, set the
 
 ## Known limitations
 
-- **One shared instructor login.** Instructors sign in with a single admin password; there are no per-instructor accounts yet, so every instructor can see and edit every tutor.
+- **Trial only.** There are no instructor accounts and no paid plan yet. Trial limits are per student per day (UTC); there is no per-IP limit, so one person could register several accounts.
+- **Launch emails are not sent automatically.** The site promises to email trial users when the full version is out; the addresses are in the `users` table, but no mailer is built in.
+- **Queries are plain SQL.** The database layer runs parameterised SQL on a SQLAlchemy engine and the schema is managed by Alembic; the queries have not been rewritten as ORM models.
 - **No answer grading gate.** The tutor moves on after each answer and explains mistakes, but it does not hold a lesson until the student has shown understanding (it re-teaches only when the student asks for help or seems stuck).
 - **Voice after "end lesson".** The voice connection stays open after a lesson is ended or paused; the tutor simply stops teaching until the student resumes.
 - **Existing lessons keep their old plan.** Lessons planned before an update keep that plan until the student chooses **Restart lesson**.
 - **Single instance.** See the scaling note above.
+
+---
+
+## Contact
+
+- Email: [mapalokanyanta1@gmail.com](mailto:mapalokanyanta1@gmail.com)
+- Phone: 0765237189
+- GitHub: [@devKanyanta](https://github.com/devKanyanta)
 
 ---
 

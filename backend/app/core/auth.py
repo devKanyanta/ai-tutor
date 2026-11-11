@@ -36,10 +36,6 @@ def _digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _stamp(moment: datetime) -> str:
-    return moment.strftime("%Y-%m-%d %H:%M:%S")
-
-
 def create_user(email: str, name: str, password: str) -> Dict[str, Any]:
     """Raises ValueError if the email is already registered."""
     user_id = str(uuid.uuid4())
@@ -70,10 +66,10 @@ def issue_token(user_id: str) -> str:
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
     with get_db() as db:
-        db.execute("DELETE FROM auth_tokens WHERE expires_at < ?", (_stamp(now),))
+        db.execute("DELETE FROM auth_tokens WHERE expires_at < ?", (now,))
         db.execute(
             "INSERT INTO auth_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
-            (_digest(token), user_id, _stamp(now + timedelta(days=TOKEN_DAYS))),
+            (_digest(token), user_id, now + timedelta(days=TOKEN_DAYS)),
         )
         db.commit()
     return token
@@ -92,7 +88,7 @@ def user_from_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
         row = db.execute(
             """SELECT u.id, u.email, u.name FROM auth_tokens t JOIN users u ON u.id = t.user_id
                WHERE t.token_hash = ? AND t.expires_at > ?""",
-            (_digest(token), _stamp(datetime.now(timezone.utc))),
+            (_digest(token), datetime.now(timezone.utc)),
         ).fetchone()
     return dict(row) if row else None
 

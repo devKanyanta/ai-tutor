@@ -30,7 +30,18 @@ export interface Tutor {
   completed_lessons: number;
   /** Overall course progress 0-100, counting partly finished lessons. */
   progress_percent: number;
+  /** Created by this student during the free trial (they can delete it), not by an instructor. */
+  owned: boolean;
   created_at: string;
+}
+
+/** Free-trial limits, what this student has used so far, and the notice about the full release. */
+export interface TrialStatus {
+  limits: { max_tutors: number; max_upload_mb: number; daily_turns: number; daily_voice_minutes: number };
+  usage: { tutors: number; turns: number; voice_seconds: number };
+  remaining: { tutors: number; turns: number; voice_seconds: number };
+  notice: string;
+  rule?: string;
 }
 
 /** Instructor view: adds the private teaching guidance. */

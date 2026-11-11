@@ -1,5 +1,5 @@
 import os
-from pydantic_settings import BaseSettings
+
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     DATA_DIR: Path = BASE_DIR / "data"
     UPLOAD_DIR: Path = DATA_DIR / "uploads"
     VECTOR_STORE_DIR: Path = DATA_DIR / "vector_store"
-    DB_PATH: Path = DATA_DIR / "tutor.db"
+    # PostgreSQL. The default connects over the local socket as the current OS user.
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql+psycopg:///ai_tutor")
     
     # Gemini LLM & Embeddings
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
@@ -32,6 +33,12 @@ class Settings(BaseSettings):
     # by this backend (same origin); set your real domain(s) if hosting the frontend elsewhere.
     CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "*")
     FRONTEND_DIST: Path = Path(os.getenv("FRONTEND_DIST", str(BASE_DIR.parent / "frontend" / "dist")))
+
+    # Free trial limits (students try the tutor with their own course material)
+    TRIAL_MAX_TUTORS: int = 2              # tutors one student can have at a time
+    TRIAL_MAX_UPLOAD_MB: int = 5           # size of the single course file per tutor
+    TRIAL_DAILY_TURNS: int = 40            # tutor replies per student per day (text and voice)
+    TRIAL_DAILY_VOICE_MINUTES: int = 10    # live voice time per student per day
 
     # RAG Settings
     CHUNK_SIZE: int = 500

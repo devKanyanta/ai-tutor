@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { Logo } from '../Logo';
-import { Link } from '../../router';
 import { useAuth } from './AuthContext';
 
 const input = 'w-full rounded-lg border border-ink-300 bg-white px-4 py-3 text-sm focus:border-board-500 focus:outline-none focus:ring-2 focus:ring-board-500/20';
@@ -35,14 +34,13 @@ export const AuthPage: React.FC = () => {
       <header className="border-b border-ink-200 bg-surface">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-8">
           <Logo />
-          <Link to="/studio" className="px-2 py-2 text-xs font-medium text-ink-600 hover:text-ink-900">Instructors</Link>
         </div>
       </header>
       <main className="flex flex-1 items-start justify-center px-4 py-12 sm:items-center">
         <div className="card anim-rise w-full max-w-sm p-7">
           <h1 className="text-2xl font-semibold text-ink-900">{signup ? 'Create your account' : 'Welcome back'}</h1>
           <p className="mb-5 mt-1 text-sm text-ink-500">
-            {signup ? 'Your progress through each course is saved to your account.' : 'Sign in to pick up your course where you left off.'}
+            {signup ? 'Try Socratic free: make a tutor from your own course notes. Your progress is saved to your account.' : 'Sign in to pick up your course where you left off.'}
           </p>
           {error && (
             <div role="alert" className="mb-4 flex items-center gap-2 rounded-lg bg-clay-50 px-3 py-2.5 text-sm text-clay-700">

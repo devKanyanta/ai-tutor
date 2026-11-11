@@ -1,4 +1,4 @@
-import type { AuthUser, CourseLesson, DocumentItem, Metrics, BatchUploadResult, LessonState, Tutor, TutorAdmin, TutorInput } from '../types';
+import type { TrialStatus, AuthUser, CourseLesson, DocumentItem, Metrics, BatchUploadResult, LessonState, Tutor, TutorAdmin, TutorInput } from '../types';
 
 // Relative by default: Vite proxies /api in dev, and the backend (or reverse proxy) serves it in production.
 export const BASE_URL: string = import.meta.env.VITE_API_BASE || '/api';
@@ -66,10 +66,25 @@ export const api = {
   },
 
   // Chat APIs
-  getTutors: async (): Promise<Tutor[]> => {
+  getTutors: async (): Promise<{ tutors: Tutor[]; trial: TrialStatus }> => {
     const res = await studentFetch('/chat/tutors');
     if (!res.ok) throw new Error('Failed to load tutors');
-    return (await res.json()).tutors;
+    return res.json();
+  },
+
+  // Free trial: students make their own tutor from ONE course file
+  createTrialTutor: async (subject: string, file: File): Promise<{ id: string; name: string; lesson_count: number }> => {
+    const form = new FormData();
+    form.append('subject', subject);
+    form.append('file', file);
+    const res = await studentFetch('/trial/tutors', { method: 'POST', body: form });
+    if (!res.ok) throw new Error(await errorText(res, 'Could not create your tutor'));
+    return res.json();
+  },
+
+  deleteTrialTutor: async (tutorId: string) => {
+    const res = await studentFetch(`/trial/tutors/${encodeURIComponent(tutorId)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await errorText(res, 'Could not delete the tutor'));
   },
 
   getTutor: async (tutorId: string): Promise<Tutor | null> => {

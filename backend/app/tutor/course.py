@@ -26,7 +26,7 @@ def sync_outline(tutor_id: str) -> None:
     with get_db() as db:
         docs = db.execute(
             "SELECT id, filename, chunk_count FROM documents WHERE tutor_id = ? AND status = 'READY' AND chunk_count > 0 "
-            "ORDER BY created_at, rowid",
+            "ORDER BY created_at, seq",
             (tutor_id,),
         ).fetchall()
         existing = db.execute("SELECT * FROM course_lessons WHERE tutor_id = ? ORDER BY position", (tutor_id,)).fetchall()
@@ -64,7 +64,7 @@ def sync_outline(tutor_id: str) -> None:
                 db.execute("DELETE FROM lesson_progress WHERE lesson_id = ?", (row["id"],))
                 db.execute("DELETE FROM course_lessons WHERE id = ?", (row["id"],))
 
-        for position, row in enumerate(db.execute("SELECT id FROM course_lessons WHERE tutor_id = ? ORDER BY position, rowid", (tutor_id,)).fetchall(), 1):
+        for position, row in enumerate(db.execute("SELECT id FROM course_lessons WHERE tutor_id = ? ORDER BY position, seq", (tutor_id,)).fetchall(), 1):
             db.execute("UPDATE course_lessons SET position = ? WHERE id = ?", (position, row["id"]))
         db.commit()
 
@@ -132,7 +132,7 @@ def _set_status(user_id: str, lesson_id: str, status: str) -> None:
             db.execute(
                 "INSERT INTO lesson_progress (user_id, lesson_id, status, percent, completed_at) VALUES (?, ?, 'completed', 100, CURRENT_TIMESTAMP) "
                 "ON CONFLICT (user_id, lesson_id) DO UPDATE SET status = 'completed', percent = 100, "
-                "completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP",
+                "completed_at = COALESCE(lesson_progress.completed_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP",
                 (user_id, lesson_id),
             )
         else:  # never downgrade a finished lesson
@@ -174,7 +174,7 @@ def record_percent(session_id: str, percent: int) -> None:
         db.execute(
             "INSERT INTO lesson_progress (user_id, lesson_id, status, percent) VALUES (?, ?, 'in_progress', ?) "
             "ON CONFLICT (user_id, lesson_id) DO UPDATE SET percent = excluded.percent, updated_at = CURRENT_TIMESTAMP "
-            "WHERE status != 'completed'",
+            "WHERE lesson_progress.status != 'completed'",
             (info["user_id"], info["course_lesson_id"], max(0, min(99, percent))),
         )
         db.commit()
