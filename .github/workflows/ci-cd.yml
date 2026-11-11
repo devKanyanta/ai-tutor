@@ -156,6 +156,16 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
 
+      # 1. Pull the repo on the VPS and restart the backend (rolls back by itself if unhealthy).
+      - name: Update code and restart the backend
+        env:
+          HOST: ${{ secrets.VPS_HOST }}
+          USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "$USER@$HOST" \
+            "bash -l /root/ai-tutor/scripts/deploy.sh"
+
+      # 2. Copy the frontend built earlier in this workflow into the VPS dist folder.
       - name: Upload the built frontend
         env:
           HOST: ${{ secrets.VPS_HOST }}
@@ -165,13 +175,14 @@ jobs:
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes" \
             dist/ "$USER@$HOST:/root/ai-tutor/frontend/dist/"
 
-      - name: Update and restart the backend
+      # 3. Restart the frontend process.
+      - name: Restart the frontend
         env:
           HOST: ${{ secrets.VPS_HOST }}
           USER: ${{ secrets.VPS_USER }}
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "$USER@$HOST" \
-            "bash -l /root/ai-tutor/scripts/deploy.sh"
+            "bash -lc 'pm2 restart socratic-web --update-env && pm2 save'"
 
       - name: Check the live site
         env:
