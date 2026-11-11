@@ -107,7 +107,7 @@ export const TutorPicker: React.FC = () => {
               const started = tutor.completed_lessons > 0 || percent > 0;
               const body = (
                 <>
-                  <span className="flex h-11 w-11 items-center justify-center rounded-md bg-board-800 font-serif text-lg font-bold text-[#f6f2e9]">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-md bg-board-800 font-serif text-lg font-bold text-[#f5efe4]">
                     {tutor.name.trim().charAt(0).toUpperCase() || 'T'}
                   </span>
                   <h2 className="mt-4 font-serif text-xl font-semibold text-ink-900">{tutor.name}</h2>

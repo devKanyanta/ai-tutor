@@ -35,7 +35,7 @@ export const LessonProgress: React.FC<Props> = ({ lesson, busy, onNewTopic }) =>
         {phases.map((p, i) => (
           <li key={p.id} className="flex shrink-0 items-center gap-1" aria-current={p.status === 'current' ? 'step' : undefined}>
             <span className={`whitespace-nowrap rounded px-2 py-1 font-medium transition-colors duration-500 ${
-              p.status === 'current' ? 'bg-board-800 text-[#f6f2e9]' : p.status === 'done' ? 'text-board-600' : 'text-ink-400'
+              p.status === 'current' ? 'bg-board-800 text-[#f5efe4]' : p.status === 'done' ? 'text-board-600' : 'text-ink-400'
             }`}>
               {p.status === 'done' && <Check className="mr-1 inline h-3 w-3" aria-hidden="true" />}
               {p.label}

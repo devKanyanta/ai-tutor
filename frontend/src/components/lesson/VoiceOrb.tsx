@@ -31,11 +31,11 @@ export const VoiceOrb: React.FC<VoiceOrbProps> = ({ levelsRef, mode, className }
     if (!ctx) return;
 
     const colors = {
-      idle: CSS('--color-ink-300', '#b9b2a0'),
-      tutor: CSS('--color-board-600', '#2c5847'),
+      idle: CSS('--color-ink-300', '#bbb8b0'),
+      tutor: CSS('--color-board-600', '#34507f'),
       student: CSS('--color-clay-500', '#b4472f'),
-      disc: CSS('--color-board-900', '#142b23'),
-      mark: CSS('--color-mark-300', '#f4d35e'),
+      disc: CSS('--color-board-900', '#112240'),
+      mark: CSS('--color-mark-300', '#f2a33a'),
     };
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 

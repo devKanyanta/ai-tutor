@@ -38,13 +38,13 @@ export const DemoLesson: React.FC = () => {
     <div className="overflow-hidden rounded-xl border border-ink-300 bg-surface shadow-[0_24px_60px_-24px_rgba(20,43,35,0.35)]" aria-label="Example lesson" role="img">
       <div className="flex items-center justify-between border-b border-ink-200 px-4 py-2.5 text-[11px] text-ink-500">
         <span className="font-serif text-sm font-semibold text-ink-800">Socratic</span>
-        <span className="rounded bg-board-800 px-2 py-0.5 font-medium text-[#f6f2e9]">Learn</span>
+        <span className="rounded bg-board-800 px-2 py-0.5 font-medium text-[#f5efe4]">Learn</span>
       </div>
       <div className="grid sm:grid-cols-[1fr_13.5rem]">
         <div className="on-dark relative min-h-[15rem] bg-board-900 p-6 sm:min-h-[19rem] sm:p-8">
           <div className="pointer-events-none absolute inset-2.5 rounded border border-white/10" />
-          <p className="relative text-[11px] uppercase tracking-[0.14em] text-[#c9c3b3]">Slide {slideStep + 1} / 3</p>
-          <p key={slideStep} className="anim-fade-in relative mt-5 font-serif text-[1.35rem] leading-snug text-[#f1ece0] sm:text-[1.6rem]">
+          <p className="relative text-[11px] uppercase tracking-[0.14em] text-[#c3cbdb]">Slide {slideStep + 1} / 3</p>
+          <p key={slideStep} className="anim-fade-in relative mt-5 font-serif text-[1.35rem] leading-snug text-[#f5efe4] sm:text-[1.6rem]">
             {SCRIPT[slideStep].slide.split(/(carbon dioxide|oxygen)/).map((part, i) =>
               /^(carbon dioxide|oxygen)$/.test(part) ? <strong key={i} className="font-semibold text-mark-300">{part}</strong> : part)}
           </p>

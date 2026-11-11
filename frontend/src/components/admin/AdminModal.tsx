@@ -48,7 +48,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({ isOpen, onClose, onLogin
           <X className="h-5 w-5" />
         </button>
 
-        <span className="relative mb-4 flex h-11 w-11 items-center justify-center rounded-md bg-board-800 text-[#f6f2e9]">
+        <span className="relative mb-4 flex h-11 w-11 items-center justify-center rounded-md bg-board-800 text-[#f5efe4]">
           <Lock className="h-6 w-6" />
         </span>
         <h3 id="admin-dialog-title" className="relative text-2xl font-semibold text-ink-900">Instructor sign-in</h3>

@@ -2,45 +2,45 @@
 @import 'katex/dist/katex.min.css';
 
 @theme {
-  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
 
-  /* Warm neutrals */
-  --color-ink-50: #f7f5f0;
-  --color-ink-100: #ece8df;
-  --color-ink-200: #d9d3c5;
-  --color-ink-300: #b9b2a0;
-  --color-ink-400: #8f8878;
-  --color-ink-500: #6b6556;
-  --color-ink-600: #4f4a3f;
-  --color-ink-700: #38342c;
-  --color-ink-800: #26231e;
-  --color-ink-900: #181612;
+  /* Neutrals: cream-tinted surfaces, navy-tinted text (Socratic brand) */
+  --color-ink-50: #f7f3ea;
+  --color-ink-100: #ece7dc;
+  --color-ink-200: #ddd7ca;
+  --color-ink-300: #bbb8b0;
+  --color-ink-400: #8c919d;
+  --color-ink-500: #667087;
+  --color-ink-600: #4b566c;
+  --color-ink-700: #343e53;
+  --color-ink-800: #222b3f;
+  --color-ink-900: #131d33;
 
-  /* Chalkboard green */
-  --color-board-50: #eef4f1;
-  --color-board-100: #d9e6e0;
-  --color-board-200: #b3cdc2;
-  --color-board-300: #85ad9d;
-  --color-board-400: #568b77;
-  --color-board-500: #3a6f5b;
-  --color-board-600: #2c5847;
-  --color-board-700: #234739;
-  --color-board-800: #1b382d;
-  --color-board-900: #142b23;
-  --color-board-950: #0d1c17;
+  /* Brand navy (#112240 is the logo tile) */
+  --color-board-50: #f0f3f8;
+  --color-board-100: #e0e6f0;
+  --color-board-200: #c3cee1;
+  --color-board-300: #98abcb;
+  --color-board-400: #6f88b3;
+  --color-board-500: #4a6797;
+  --color-board-600: #34507f;
+  --color-board-700: #243d66;
+  --color-board-800: #1a2f52;
+  --color-board-900: #112240;
+  --color-board-950: #0a1730;
 
-  /* Highlighter yellow (used sparingly) */
-  --color-mark-300: #f4d35e;
-  --color-mark-400: #eec23a;
-  --color-mark-700: #7a5a00;
+  /* Brand amber (the logo's orange half and the dot on the i) */
+  --color-mark-300: #f2a33a;
+  --color-mark-400: #e8912a;
+  --color-mark-700: #8a5000;
 
   /* Clay red for the student's voice and errors */
   --color-clay-50: #faece8;
   --color-clay-500: #b4472f;
   --color-clay-700: #8a3321;
 
-  --color-paper: #f6f2e9;
+  --color-paper: #f5efe4;
   --color-surface: #fffdf8;
 }
 
@@ -56,7 +56,7 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 .font-serif { font-family: var(--font-serif); }
-h1, h2, h3 { font-family: var(--font-serif); font-weight: 600; letter-spacing: -0.015em; text-wrap: balance; }
+h1, h2, h3 { font-family: var(--font-serif); font-weight: 700; letter-spacing: -0.025em; text-wrap: balance; }
 p { text-wrap: pretty; }
 
 :focus-visible { outline: 2px solid var(--color-board-500); outline-offset: 2px; border-radius: 4px; }
@@ -93,7 +93,7 @@ p { text-wrap: pretty; }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; font-weight: 600; font-size: .9rem; border-radius: .5rem; padding: .7rem 1.1rem; transition: background .15s ease, color .15s ease, border-color .15s ease, transform .15s ease; cursor: pointer; }
 .btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn-primary { background: var(--color-board-800); color: #f6f2e9; border: 1px solid var(--color-board-800); }
+.btn-primary { background: var(--color-board-800); color: #f5efe4; border: 1px solid var(--color-board-800); }
 .btn-primary:hover:not(:disabled) { background: var(--color-board-700); }
 .btn-ghost { background: transparent; color: var(--color-ink-800); border: 1px solid var(--color-ink-300); }
 .btn-ghost:hover:not(:disabled) { background: var(--color-ink-100); }
@@ -103,7 +103,7 @@ p { text-wrap: pretty; }
 @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
 /* Markdown rendered on the chalkboard (slides) */
-.md-board { color: #f1ece0; font-family: var(--font-serif); line-height: 1.5; overflow-wrap: anywhere; }
+.md-board { color: #f5efe4; font-family: var(--font-serif); line-height: 1.5; overflow-wrap: anywhere; }
 .md-board p { margin: 0 0 .9em; } .md-board p:last-child { margin-bottom: 0; }
 .md-board strong { color: var(--color-mark-300); font-weight: 600; }
 .md-board em { font-style: italic; }
@@ -112,7 +112,7 @@ p { text-wrap: pretty; }
 .md-board li { margin: .35em 0; } .md-board li::marker { color: var(--color-mark-300); }
 .md-board h1, .md-board h2, .md-board h3 { color: #fff; margin: 0 0 .5em; font-size: 1.15em; }
 .md-board a { color: var(--color-mark-300); text-decoration: underline; text-underline-offset: 3px; }
-.md-board blockquote { margin: 0 0 .9em; padding-left: 1em; border-left: 3px solid var(--color-mark-300); color: #dfd9c9; }
+.md-board blockquote { margin: 0 0 .9em; padding-left: 1em; border-left: 3px solid var(--color-mark-300); color: #d5d9e3; }
 .md-board pre { margin: 0 0 .9em; padding: 1rem 1.1rem; background: rgb(0 0 0 / .32); border-radius: .5rem; overflow-x: auto; font-size: .62em; line-height: 1.6; text-align: left; }
 .md-board code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .md-board :not(pre) > code { background: rgb(255 255 255 / .12); padding: .08em .35em; border-radius: .3em; font-size: .85em; }

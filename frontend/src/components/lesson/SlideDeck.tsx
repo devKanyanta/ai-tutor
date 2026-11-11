@@ -79,7 +79,7 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
 
   return (
     <section
-      className="on-dark relative flex h-full min-h-0 flex-col bg-board-900 text-[#f1ece0]"
+      className="on-dark relative flex h-full min-h-0 flex-col bg-board-900 text-[#f5efe4]"
       aria-label="Lesson board"
       onTouchStart={(e) => { touchX.current = e.touches[0].clientX; }}
       onTouchEnd={(e) => {
@@ -92,7 +92,7 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
       <div className="pointer-events-none absolute inset-3 rounded-lg border border-white/10 sm:inset-5" aria-hidden="true" />
 
       {/* Header */}
-      <div className="relative flex shrink-0 items-center justify-between px-7 pb-1 pt-6 text-xs text-[#c9c3b3] sm:px-12 sm:pt-9">
+      <div className="relative flex shrink-0 items-center justify-between px-7 pb-1 pt-6 text-xs text-[#c3cbdb] sm:px-12 sm:pt-9">
         <div className="flex items-center gap-1">
           {turn ? (
             <>
@@ -124,7 +124,7 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
         {!turn && !thinking && (
           <div className="anim-fade-in mx-auto w-full max-w-2xl">
             <h2 className="text-3xl font-semibold text-white sm:text-5xl">{starters.length ? 'What shall we study today?' : 'Your lesson is ready when you are'}</h2>
-            <p className="mt-4 max-w-lg text-base text-[#c9c3b3]">
+            <p className="mt-4 max-w-lg text-base text-[#c3cbdb]">
               {starters.length
                 ? 'Start a voice lesson, or type a question. Explanations appear here one idea at a time, taken from your course materials.'
                 : 'Press “Start voice lesson” to talk it through, or type below. Explanations appear here one idea at a time.'}
@@ -139,7 +139,7 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
                   >
                     <span>
                       <span className="block text-sm font-semibold text-white group-hover:text-mark-300">{s.title}</span>
-                      <span className="block text-sm text-[#c9c3b3]">{s.text}</span>
+                      <span className="block text-sm text-[#c3cbdb]">{s.text}</span>
                     </span>
                     <ArrowUpRight className="h-4 w-4 shrink-0 opacity-50 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
                   </button>
@@ -150,7 +150,7 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
         )}
 
         {thinking && !turn?.content && (
-          <div className="mx-auto flex items-center gap-3 text-[#c9c3b3]" role="status">
+          <div className="mx-auto flex items-center gap-3 text-[#c3cbdb]" role="status">
             <span className="dot-pulse flex gap-1.5" aria-hidden="true">
               <span className="h-2 w-2 rounded-full bg-mark-300" /><span className="h-2 w-2 rounded-full bg-mark-300" /><span className="h-2 w-2 rounded-full bg-mark-300" />
             </span>
@@ -161,7 +161,7 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
         {slide && (
           <div className="mx-auto w-full max-w-3xl">
             {showTrail && (
-              <p key={`trail-${slideIdx}`} className="anim-fade-in mb-6 line-clamp-3 font-serif text-[1.05rem] leading-snug text-[#f1ece0]/45 sm:text-[1.25rem]">
+              <p key={`trail-${slideIdx}`} className="anim-fade-in mb-6 line-clamp-3 font-serif text-[1.05rem] leading-snug text-[#f5efe4]/45 sm:text-[1.25rem]">
                 {slides[slideIdx - 1]?.replace(/[*_`#>$]/g, '')}
               </p>
             )}
@@ -176,7 +176,7 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
       </div>
 
       {showSources && turn && (
-        <div className="board-scroll anim-rise relative mx-7 mb-2 max-h-40 shrink-0 space-y-2 overflow-y-auto rounded-lg bg-black/25 p-3 text-xs text-[#d8d2c2] sm:mx-12">
+        <div className="board-scroll anim-rise relative mx-7 mb-2 max-h-40 shrink-0 space-y-2 overflow-y-auto rounded-lg bg-black/25 p-3 text-xs text-[#d5dbe7] sm:mx-12">
           {(turn.sources ?? []).map((s, i) => (
             <p key={i}><span className="font-semibold text-white">{s.filename}, section {s.chunk_index + 1}.</span> “{s.snippet}”</p>
           ))}
@@ -215,7 +215,7 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
                 <button
                   onClick={() => setShowSources((v) => !v)}
                   aria-expanded={showSources}
-                  className="inline-flex max-w-full items-center gap-1.5 rounded border border-white/20 px-2 py-1 text-[#d8d2c2] transition-colors hover:bg-white/10"
+                  className="inline-flex max-w-full items-center gap-1.5 rounded border border-white/20 px-2 py-1 text-[#d5dbe7] transition-colors hover:bg-white/10"
                 >
                   <FileText className="h-3.5 w-3.5 shrink-0" />
                   <span className="truncate">Source: {sourceNames[0]}{sourceNames.length > 1 ? ` +${sourceNames.length - 1}` : ''}</span>
@@ -226,23 +226,23 @@ export const SlideDeck: React.FC<SlideDeckProps> = ({
                   <button disabled={disabled} onClick={() => onAsk("Yes, I'm ready to move on")} className="rounded bg-mark-300 px-2.5 py-1 font-semibold text-board-950 transition-colors hover:bg-mark-400 disabled:opacity-40">
                     Yes, move on to {checkpoint}
                   </button>
-                  <button disabled={disabled} onClick={() => onAsk('Not yet, I would like to go over this some more')} className="rounded border border-white/20 px-2 py-1 text-[#d8d2c2] transition-colors hover:bg-white/10 disabled:opacity-40">
+                  <button disabled={disabled} onClick={() => onAsk('Not yet, I would like to go over this some more')} className="rounded border border-white/20 px-2 py-1 text-[#d5dbe7] transition-colors hover:bg-white/10 disabled:opacity-40">
                     Not yet
                   </button>
                 </>
               )}
               {!isLive && turnIdx === latest && !checkpoint && QUICK.map(([label, text]) => (
-                <button key={label} disabled={disabled} onClick={() => onAsk(text)} className="rounded border border-white/20 px-2 py-1 text-[#d8d2c2] transition-colors hover:bg-white/10 disabled:opacity-40">
+                <button key={label} disabled={disabled} onClick={() => onAsk(text)} className="rounded border border-white/20 px-2 py-1 text-[#d5dbe7] transition-colors hover:bg-white/10 disabled:opacity-40">
                   {label}
                 </button>
               ))}
             </div>
             {settled && (
               <div className="flex items-center gap-1">
-                <button onClick={() => onFeedback(turn.id, 1)} aria-pressed={turn.feedback === 1} aria-label="This helped" className={`rounded p-1.5 transition-colors hover:bg-white/10 ${turn.feedback === 1 ? 'text-mark-300' : 'text-[#c9c3b3]'}`}>
+                <button onClick={() => onFeedback(turn.id, 1)} aria-pressed={turn.feedback === 1} aria-label="This helped" className={`rounded p-1.5 transition-colors hover:bg-white/10 ${turn.feedback === 1 ? 'text-mark-300' : 'text-[#c3cbdb]'}`}>
                   <ThumbsUp className="h-4 w-4" />
                 </button>
-                <button onClick={() => onFeedback(turn.id, -1)} aria-pressed={turn.feedback === -1} aria-label="This was unclear" className={`rounded p-1.5 transition-colors hover:bg-white/10 ${turn.feedback === -1 ? 'text-mark-300' : 'text-[#c9c3b3]'}`}>
+                <button onClick={() => onFeedback(turn.id, -1)} aria-pressed={turn.feedback === -1} aria-label="This was unclear" className={`rounded p-1.5 transition-colors hover:bg-white/10 ${turn.feedback === -1 ? 'text-mark-300' : 'text-[#c3cbdb]'}`}>
                   <ThumbsDown className="h-4 w-4" />
                 </button>
               </div>

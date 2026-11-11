@@ -479,7 +479,7 @@ export const LessonPage: React.FC<{ tutorId: string }> = ({ tutorId }) => {
                       role="radio"
                       aria-checked={pace === id}
                       onClick={() => setPaceState(id)}
-                      className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors ${pace === id ? 'bg-board-800 text-[#f6f2e9]' : 'bg-white text-ink-600 hover:bg-ink-100'}`}
+                      className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors ${pace === id ? 'bg-board-800 text-[#f5efe4]' : 'bg-white text-ink-600 hover:bg-ink-100'}`}
                     >
                       {label}
                     </button>

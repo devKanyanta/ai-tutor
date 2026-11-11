@@ -3,6 +3,7 @@ import { ArrowLeft, LogOut, Pencil, Trash2 } from 'lucide-react';
 import { useRoute, useQueryParam, navigate, Link } from './router';
 import { Logo } from './components/Logo';
 import { Landing } from './components/site/Landing';
+import { Contact } from './components/site/Contact';
 import { LessonPage } from './components/lesson/LessonPage';
 import { DocumentManager } from './components/admin/DocumentManager';
 import { MetricsOverview } from './components/admin/MetricsOverview';
@@ -199,6 +200,7 @@ export function App() {
   return (
     <div key={route} className="anim-fade-in">
       {route === '/' && <Landing />}
+      {route === '/contact' && <Contact />}
       {route === '/learn' && <Learn />}
       {route === '/studio' && <Studio />}
     </div>

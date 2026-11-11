@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
-export type Route = '/' | '/learn' | '/studio';
-const ROUTES: Route[] = ['/', '/learn', '/studio'];
+export type Route = '/' | '/learn' | '/studio' | '/contact';
+const ROUTES: Route[] = ['/', '/learn', '/studio', '/contact'];
 
 const currentRoute = (): Route => {
   const path = window.location.pathname.replace(/\/+$/, '') || '/';

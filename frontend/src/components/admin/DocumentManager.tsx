@@ -180,7 +180,7 @@ export const DocumentManager: React.FC<DocumentManagerProps> = ({ token, tutorId
       >
         <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt,.md,.csv" multiple onChange={handleFileChange} className="hidden" id="curriculum-upload" disabled={isUploading} />
         <label htmlFor="curriculum-upload" className="flex cursor-pointer flex-col items-center">
-          <span className={`mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-board-800 text-[#f6f2e9]`}>
+          <span className={`mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-board-800 text-[#f5efe4]`}>
             {isUploading ? <Loader2 className="h-7 w-7 animate-spin" /> : <UploadCloud className="h-7 w-7" />}
           </span>
           <span className="font-serif text-xl font-semibold text-ink-900">
